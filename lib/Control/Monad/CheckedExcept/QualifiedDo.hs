@@ -1,19 +1,6 @@
 {-# LANGUAGE
-    KindSignatures
-  , TypeFamilies
-  , DataKinds
-  , TypeOperators
-  , UndecidableInstances
-  , GADTs
-  , TypeApplications
+    TypeApplications
   , ScopedTypeVariables
-  , RankNTypes
-  , StandaloneDeriving
-  , DefaultSignatures
-  , FlexibleContexts
-  , DerivingVia
-  , PolyKinds
-  , PolyKinds
   , LambdaCase
 #-}
 

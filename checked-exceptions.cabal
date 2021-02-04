@@ -31,3 +31,26 @@ library
     , constraints
   hs-source-dirs: lib
   default-language: Haskell2010
+
+test-suite test
+  type:
+    exitcode-stdio-1.0
+  hs-source-dirs:
+    test
+  main-is:
+    Main.hs
+  build-depends:
+      HUnit
+    , tasty
+    , base
+    , tasty-hunit
+    , tasty-quickcheck
+    , QuickCheck
+    , checked-exceptions 
+    , mtl
+  ghc-options:
+    -Wall
+    -O2
+  default-language:
+    Haskell2010
+

@@ -10,21 +10,27 @@
   , RankNTypes
   , StandaloneDeriving
   , DefaultSignatures
-  , FlexibleContexts
   , DerivingVia
   , PolyKinds
   , LambdaCase
+  , MultiParamTypeClasses
+  , AllowAmbiguousTypes
 #-}
 
 module Control.Monad.CheckedExcept 
-  ( CheckedExceptT(..)
+  ( -- types
+    CheckedExceptT(..)
   , CheckedExcept
-  , runCheckedExcept
-  , throwCheckedException
   , OneOf(..)
-  , applyAll
+  -- type families / constraints
   , Contains
   , Elem
+  -- typeclass
+  , CheckedException(..)
+  -- utility functions
+  , runCheckedExcept
+  , throwCheckedException
+  , applyAll
   , weakenExceptions
   , weakenOneOf
   , withOneOf
@@ -55,7 +61,7 @@ weakenExceptions :: forall exceptions1 exceptions2 m a.
   -> CheckedExceptT exceptions2 m a
 weakenExceptions (CheckedExceptT ma) = CheckedExceptT $ do
   ma <&> \case
-    Left e -> Left $ (weakenOneOf @exceptions1 @exceptions2 e)
+    Left e -> Left $ weakenOneOf @exceptions1 @exceptions2 e
     Right a -> Right a
 
 weakenOneOf :: forall exceptions1 exceptions2.
@@ -72,9 +78,9 @@ weakenOneOf (OneOf e') = weakenE e'
     => e 
     -> OneOf exceptions2
   weakenE e = do
-    -- idk how to safely prove this, but the `Contains` constraint guarentees this is true
+    -- idk how to safely prove this, but the `Contains` constraint guarentees this is true/safe
     let dict1 :: Dict (Elem e exceptions2)
-        dict1 = unsafeCoerce (Dict @(Elem e exceptions1)) 
+        dict1 = unsafeCoerce (Dict @(Elem e exceptions1))
     OneOf e \\ dict1
 
 runCheckedExcept :: CheckedExcept es a -> Either (OneOf es) a
@@ -115,27 +121,6 @@ withOneOf e f = case fromOneOf e of
   Just x -> f x
   Nothing -> mempty
 
-{- 
-type TestExceptions = '[(), Int]
-
-test :: CheckedExcept TestExceptions () -> IO ()
-test ce = case runCheckedExcept ce of
-  Left e -> do 
-    applyAll (putStrLn . encodeException) e
-    -- or
-    withOneOf @() e $ \() -> putStrLn "()"
-    withOneOf @Int e $ \n -> print $ n + 1
-  Right () -> putStrLn "Right"
-
--- doens't compile
-test2 :: CheckedExcept '[] () -> IO ()
-test2 ce = 
-  case runCheckedExcept ce of
-    Left (OneOf e) -> do 
-      caseException (Proxy @'[]) e Nil
-    Right () -> putStrLn "Right"
-#-}
-
 type family Elem' x xs where
   Elem' x '[] = 'False
   Elem' x (x ': xs) = 'True
@@ -144,7 +129,7 @@ type family Elem' x xs where
 type family Elem x xs :: Constraint where
   Elem x xs = 
     If (Elem' x xs) 
-      ('True ~ 'True) 
+      (() :: Constraint)
       (TypeError ('ShowType x ':<>: 'Text " is not a member of " ':<>: 'ShowType xs))
 
 type family Contains (as :: [k]) (bs :: [k]) :: Constraint where
