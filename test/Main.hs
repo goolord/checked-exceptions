@@ -31,7 +31,11 @@ unitTests = testGroup "Unit tests"
 unwrap :: Either a b -> b
 unwrap = either (error "unwrap") id
 
-type TestExceptions = '[(), Int]
+type TestExceptions = '[(), Int, Bool, String]
+
+deriving via (ShowException ()) instance CheckedException ()
+deriving via (ShowException Int) instance CheckedException Int
+deriving via (ShowException Bool) instance CheckedException Bool
 
 test :: CheckedExcept TestExceptions () -> IO ()
 test ce = case runCheckedExcept ce of
@@ -40,7 +44,16 @@ test ce = case runCheckedExcept ce of
     -- or
     withOneOf @() e $ \() -> putStrLn "()"
     withOneOf @Int e $ \n -> print $ n + 1
+    withOneOf @Bool e $ \_ -> pure ()
+    -- or
+    caseException e
+      (  (\() -> putStrLn "()")
+      <: (\n -> print $ n + 1)
+      <: RecAny (\x -> putStrLn $ encodeException x)
+      -- or: RecNil
+      )
   Right () -> putStrLn "Right"
+
 
 {- 
 -- doens't compile
