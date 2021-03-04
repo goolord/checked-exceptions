@@ -27,6 +27,8 @@ module Control.Monad.CheckedExcept
   -- type families / constraints
   , Contains
   , Elem
+  , Nub
+  , Remove
   -- typeclass
   , CheckedException(..)
   -- utility functions
@@ -133,6 +135,17 @@ withOneOf e f = case fromOneOf e of
   Just x -> f x
   Nothing -> mempty
 
+-- | Remove duplicates from a type-level list.
+type family Nub xs where
+  Nub '[] = '[]
+  Nub (x ': xs) = x ': Nub (Remove x xs)
+
+-- | Remove element from a type-level list.
+type family Remove x xs where
+  Remove x '[]       = '[]
+  Remove x (x ': ys) =      Remove x ys
+  Remove x (y ': ys) = y ': Remove x ys
+
 type family Elem' x xs where
   Elem' x '[] = 'False
   Elem' x (x ': xs) = 'True
@@ -153,7 +166,7 @@ type family NonEmpty xs :: Constraint where
   NonEmpty _ = () :: Constraint
 
 -- todo: exceptions can show up more than once in the list..
-caseException :: NonEmpty es => OneOf es -> Rec x es -> x
+caseException :: NonEmpty es => OneOf es -> Rec x (Nub es) -> x
 caseException (OneOf e') = go e'
   where
   test :: (Typeable e1, Typeable e2) => e2 -> (e1 -> x) -> Maybe (e1 :~: e2)
