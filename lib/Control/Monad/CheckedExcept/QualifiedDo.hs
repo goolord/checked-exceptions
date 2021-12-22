@@ -40,3 +40,5 @@ return = Prelude.return
   -> CheckedExceptT exceptions3 m a
 a >> b = weakenExceptions a Prelude.>> weakenExceptions b
 
+fail :: Prelude.MonadFail m => String -> CheckedExceptT es m a
+fail = Prelude.fail

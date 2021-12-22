@@ -15,6 +15,7 @@
   , LambdaCase
   , MultiParamTypeClasses
   , AllowAmbiguousTypes
+  , ConstraintKinds
 #-}
 
 module Control.Monad.CheckedExcept 
@@ -29,6 +30,7 @@ module Control.Monad.CheckedExcept
   , Elem
   , Nub
   , Remove
+  , type (++)
   -- typeclass
   , CheckedException(..)
   -- utility functions
@@ -140,6 +142,11 @@ type family Nub xs where
   Nub '[] = '[]
   Nub (x ': xs) = x ': Nub (Remove x xs)
 
+infixr 5 ++
+type family (++) (xs :: [k]) (ys :: [k]) :: [k] where
+    '[]       ++ ys = ys
+    (x ': xs) ++ ys = x ': xs ++ ys
+
 -- | Remove element from a type-level list.
 type family Remove x xs where
   Remove x '[]       = '[]
@@ -151,6 +158,8 @@ type family Elem' x xs where
   Elem' x (x ': xs) = 'True
   Elem' x (y ': xs) = Elem' x xs
 
+-- type Elem x xs = Elem' x xs ~ 'True
+-- sometimes causes weird type errors when it doesn't propagate correctly ??
 type family Elem x xs :: Constraint where
   Elem x xs = 
     If (Elem' x xs) 
@@ -159,7 +168,8 @@ type family Elem x xs :: Constraint where
 
 type family Contains (as :: [k]) (bs :: [k]) :: Constraint where
   Contains '[] _ = ()
-  Contains (a ': as) bs = (Elem a bs, Contains as bs)
+  Contains as as = ()
+  Contains (a ': as) bs = (Elem' a bs ~ 'True, Contains as bs)
 
 type family NonEmpty xs :: Constraint where
   NonEmpty '[] = TypeError ('Text "type level list must be non-empty")
