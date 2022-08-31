@@ -5,54 +5,50 @@ module Control.Monad.CheckedExcept.Plugin.Bind where
 
 import qualified Data.Set as S
 import GHC.IORef (newIORef, IORef)
-import GHC.Tc.Types
-import GHC.Plugins (Module, TyCon, OccName, SDoc, mkModuleName, mkTcOcc, Outputable (ppr), showSDocUnsafe)
+import GHC.Plugins
 import GHC.Tc.Types.Constraint
-import GHC.Tc.Plugin
+import qualified GHC.Tc.Plugin as TC
+import qualified GHC.Tc.Types as TC
 
 bindPlugin :: TcPlugin
-bindPlugin = TcPlugin
-  { tcPluginInit = pure ()
-  , tcPluginSolve = solveBind
-  , tcPluginStop = const $ pure ()
+bindPlugin _ = Just $ TC.TcPlugin
+  { TC.tcPluginInit = pure ()
+  , TC.tcPluginSolve = const solveBind
+  , TC.tcPluginStop = const $ pure ()
+  , TC.tcPluginRewrite = mempty
   }
 
-thePlugin :: TcPluginM ()
+thePlugin :: TC.TcPluginM ()
 thePlugin = pure ()
 
-lookupCheckedExceptMod :: TcPluginM Module
+lookupCheckedExceptMod :: TC.TcPluginM Module
 lookupCheckedExceptMod = do
-   findResult <- findImportedModule ( mkModuleName "Control.Monad.CheckedExcept" ) ( Just "checked-exceptions" )
+   findResult <- TC.findImportedModule ( mkModuleName "Control.Monad.CheckedExcept" ) NoPkgQual -- ( Just "checked-exceptions" )
    case findResult of
-     Found _ modCE -> pure modCE
+     TC.Found _ modCE -> pure modCE
      _ -> error "Couldn't find Control.Monad.CheckedExcept"
 
-lookupElem :: Module -> TcPluginM TyCon
+lookupElem :: Module -> TC.TcPluginM TyCon
 lookupElem modCE = do
   let
     myTyFam_OccName :: OccName
     myTyFam_OccName = mkTcOcc "MyFam"
-  myTyFam_Name <- lookupOrig modCE myTyFam_OccName
-  tcLookupTyCon myTyFam_Name
+  myTyFam_Name <- TC.lookupOrig modCE myTyFam_OccName
+  TC.tcLookupTyCon myTyFam_Name
 
-solveBind
-    :: ()
-    -> [Ct]
-    -> [Ct]
-    -> [Ct]
-    -> TcPluginM TcPluginResult
-solveBind _ _ _ [] = pure $ TcPluginOk [] []
-solveBind () given _ wanted = do
+solveBind :: TC.TcPluginSolver
+solveBind _ _ [] = pure $ TC.TcPluginOk [] []
+solveBind given _ wanted = do
   fuckingTraceString "given: "
   fuckingTraceOutputable given
   fuckingTraceString "wanted: "
   fuckingTraceOutputable wanted
-  pure $ TcPluginOk [] []
+  pure $ TC.TcPluginOk [] []
 
-fuckingTraceString :: String -> TcPluginM ()
-fuckingTraceString = tcPluginIO . putStrLn
+fuckingTraceString :: String -> TC.TcPluginM ()
+fuckingTraceString = TC.tcPluginIO . putStrLn
 
-fuckingTraceOutputable :: Outputable a => a -> TcPluginM ()
+fuckingTraceOutputable :: Outputable a => a -> TC.TcPluginM ()
 fuckingTraceOutputable = fuckingTraceString . showSDocUnsafe . ppr
 
 -- data ElemConstraint = ElemConstraint
