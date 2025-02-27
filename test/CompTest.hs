@@ -23,12 +23,19 @@ import Control.Monad.CheckedExcept
 import Control.Monad.Trans.Class (lift)
 import qualified Control.Monad.CheckedExcept.QualifiedDo as CheckedExcept
 
-testCE1 :: CheckedExceptT '[()] IO ()
-testCE1 = CheckedExcept.do
-  lift $ putStrLn "1"
-  lift $ putStrLn "2"
+
+badTestCE1 :: CheckedExceptT '[Int] IO ()
+badTestCE1 = CheckedExcept.do
+  lift $ putStrLn "4"
+  throwCheckedException (1 :: Int)
   pure ()
 
+-- testCE1 :: CheckedExceptT '[()] IO ()
+-- testCE1 = CheckedExcept.do
+--   lift $ putStrLn "1"
+--   lift $ putStrLn "2"
+--   pure ()
+--
 -- testCE2 :: CheckedExceptT '[Int] IO ()
 -- testCE2 = CheckedExcept.do
 --   lift $ putStrLn "2"
@@ -45,15 +52,21 @@ testCE1 = CheckedExcept.do
 -- testCE4 = CheckedExcept.do
 --   lift $ putStrLn "4"
 --   throwCheckedException "err"
---   throwCheckedException (2 :: Int)
+--   pure ()
+--
+-- testCE5 :: CheckedExceptT '[Char] IO ()
+-- testCE5 = CheckedExcept.do
+--   lift $ putStrLn "4"
+--   throwCheckedException 'c'
 --   pure ()
 --
 -- testCE :: CheckedExceptT TestExceptions IO ()
 -- testCE = CheckedExcept.do
 --   () <- testCE1
 --   () <- testCE2
---   -- () <- testCE3
---   -- () <- testCE4
+--   () <- testCE3
+--   () <- testCE4
+--   () <- testCE5
 --   pure ()
 
 --
@@ -92,3 +105,4 @@ deriving via (ShowException ()) instance CheckedException ()
 deriving via (ShowException Int) instance CheckedException Int
 deriving via (ShowException Bool) instance CheckedException Bool
 deriving via (ShowException String) instance CheckedException [Char]
+deriving via (ShowException Char) instance CheckedException Char
