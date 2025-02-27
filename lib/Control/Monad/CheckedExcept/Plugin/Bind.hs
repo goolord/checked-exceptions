@@ -9,7 +9,10 @@
 
 module Control.Monad.CheckedExcept.Plugin.Bind
   ( bindPlugin
-  )
+  , tcPrintLn
+  , tcPrint
+  , tcPrintOutputable
+  , tcTraceLabel)
 where
 
 import GHC.Plugins hiding ((<>))
@@ -42,14 +45,6 @@ lookupCheckedExceptMod = do
      TC.Found _ modCE -> pure modCE
      _ -> error "Couldn't find Control.Monad.CheckedExcept"
 
-lookupDataTypeBoolMod :: TC.TcPluginM Module
-lookupDataTypeBoolMod = do
-   findResult <- TC.findImportedModule ( mkModuleName "GHC.Internal.Data.Type.Bool" ) NoPkgQual
-   case findResult of
-     TC.Found _ modCE -> pure modCE
-     _ -> error "Couldn't find Data.Type.Bool"
-
-
 lookupContains :: Module -> TC.TcPluginM TyCon
 lookupContains modCE = do
   let
@@ -73,10 +68,10 @@ data Environment = Environment
 
 solveBind :: Environment -> TC.TcPluginSolver
 solveBind _ _ _ [] = pure $ TC.TcPluginOk [] []
-solveBind env@Environment{..} envBinds _givens wanteds = do
+solveBind env@Environment{..} _envBinds _givens wanteds = do
   (unzip3 <$> traverse solve1Wanted wanteds) >>= \case
-    (eg,  w, newWork) -> do
-      pure $ TC.TcPluginOk (mconcat eg) (mconcat w <> mconcat newWork) -- todo: TcPluginContradiction when shit hits the fan
+    (eg,  _, newWork) -> do
+      pure $ TC.TcPluginOk (mconcat eg) (mconcat newWork) -- todo: TcPluginContradiction when shit hits the fan
   where
   solve1Wanted ::
        Ct
@@ -93,16 +88,20 @@ solveBind env@Environment{..} envBinds _givens wanteds = do
         -> do
           ty1 <- TC.zonkTcType ty1Unzonked
           ty2 <- TC.zonkTcType ty2Unzonked
-          let newWanted = mkNonCanonical (setCtEvPredType ir_ev $ mkContainsConstraint env ty1 ty2)
-          pure
-            ( [ (  evCast (ctEvExpr $ ctEvidence newWanted) $
-                   mkUnivCo (PluginProv "checked-exceptions") Phantom (ctPred newWanted) (ctPred wanted)
-                 , wanted
-                 )
-              ]
-            , []
-            , [newWanted]
-            )
+          if not (isTyVarTy ty1) && not (isTyVarTy ty2)
+          then
+            pure ([], [wanted], [])
+          else do
+            let newWanted = mkNonCanonical (setCtEvPredType ir_ev $ mkContainsConstraint env ty1 ty2)
+            pure
+              ( [ (  evCast (ctEvExpr $ ctEvidence newWanted) $
+                     mkUnivCo (PluginProv "checked-exceptions") Phantom (ctPred newWanted) (ctPred wanted)
+                   , wanted
+                   )
+                ]
+              , []
+              , [newWanted]
+              )
         | Just (tcIf, [ifKind, elemTf, ifTrue, ifFalse]) <- splitTyConApp_maybe ctev_pred
         , getOccName tcIf == mkTcOcc "If"
         , Just (tcElem, [_, ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe elemTf
@@ -110,16 +109,20 @@ solveBind env@Environment{..} envBinds _givens wanteds = do
         -> do
           ty1 <- TC.zonkTcType ty1Unzonked
           ty2 <- TC.zonkTcType ty2Unzonked
-          let newWanted = mkNonCanonical (setCtEvPredType ir_ev $ mkTyConApp tcIf [ifKind, mkElemConstraint env ty1 ty2, ifTrue, ifFalse])
-          pure
-            ( [ (  evCast (ctEvExpr $ ctEvidence newWanted) $
-                   mkUnivCo (PluginProv "checked-exceptions") Phantom (ctPred newWanted) (ctPred wanted)
-                 , wanted
-                 )
-              ]
-            , []
-            , [newWanted]
-            )
+          if not (isTyVarTy ty1) && not (isTyVarTy ty2)
+          then
+            pure ([], [wanted], [])
+          else do
+            let newWanted = mkNonCanonical (setCtEvPredType ir_ev $ mkTyConApp tcIf [ifKind, mkElemConstraint env ty1 ty2, ifTrue, ifFalse])
+            pure
+              ( [ (  evCast (ctEvExpr $ ctEvidence newWanted) $
+                     mkUnivCo (PluginProv "checked-exceptions") Phantom (ctPred newWanted) (ctPred wanted)
+                   , wanted
+                   )
+                ]
+              , []
+              , [newWanted]
+              )
         | otherwise -> pure ([], [wanted], [])
     _ -> do
       pure ([], [wanted], [])
@@ -145,7 +148,7 @@ getWeakest ty1 ty2 =
                else case splitTyConApp_maybe ty1 of
                  Nothing -> []
                  Just (_,ty) -> ty
-      ty2Tys = if isTyVarTy ty1
+      ty2Tys = if isTyVarTy ty2
                then []
                else case splitTyConApp_maybe ty2 of
                  Nothing -> []

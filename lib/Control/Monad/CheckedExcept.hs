@@ -164,7 +164,7 @@ type family Elem' x xs where
 -- sometimes causes weird type errors when it doesn't propagate correctly ??
 type family Elem x xs :: Constraint where
   Elem x xs = 
-    If (Elem' x xs) 
+    If (Elem' x xs)
       (() :: Constraint)
       (TypeError ('ShowType x ':<>: 'Text " is not a member of " ':<>: 'ShowType xs))
 
@@ -189,4 +189,3 @@ caseException (OneOf e') = go e'
     Nothing -> go e rec
   go e (RecAny f) = f e
   go _ RecNil = error "impossible"
-
