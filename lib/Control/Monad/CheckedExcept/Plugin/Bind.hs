@@ -19,23 +19,29 @@ import GHC.Plugins hiding ((<>))
 import GHC.Tc.Types.Constraint
 import qualified GHC.Tc.Plugin as TC
 import qualified GHC.Tc.Types as TC
-import GHC.Tc.Types.Evidence (EvTerm (..), evCast)
+import GHC.Tc.Types.Evidence (EvTerm (..), evCast, mkEvCast)
 import GHC.Core.TyCo.Rep (UnivCoProvenance(PluginProv))
 import GHC.Tc.Plugin (tcPluginTrace)
 import Data.List (nubBy)
 import GHC.Core.Map.Type (deBruijnize)
 import Data.Function (on)
+import GHC.Types.Unique (hasKey)
+import GHC.Builtin.Names (consDataConKey)
+import GHC.Core.TyCo.Compare (eqType)
+import qualified GHC.Tc.Solver.Solve as TS
+import qualified GHC.Tc.Solver.Monad as TM
+import Data.String (IsString)
 
 bindPlugin :: TcPlugin
 bindPlugin _ = Just $ TC.TcPlugin
   { TC.tcPluginInit = do
       checkedExceptMod <- lookupCheckedExceptMod
       containsTyCon <- lookupContains checkedExceptMod
-      elemTyCon <- lookupElem checkedExceptMod
+      elem'TyCon <- lookupElem' checkedExceptMod
       pure Environment {..}
   , TC.tcPluginSolve = solveBind
   , TC.tcPluginStop = const $ pure ()
-  , TC.tcPluginRewrite = mempty
+  , TC.tcPluginRewrite = \_ -> emptyUFM
   }
 
 lookupCheckedExceptMod :: TC.TcPluginM Module
@@ -53,8 +59,8 @@ lookupContains modCE = do
   myTyFam_Name <- TC.lookupOrig modCE myTyFam_OccName
   TC.tcLookupTyCon myTyFam_Name
 
-lookupElem :: Module -> TC.TcPluginM TyCon
-lookupElem modCE = do
+lookupElem' :: Module -> TC.TcPluginM TyCon
+lookupElem' modCE = do
   let
     myTyFam_OccName :: OccName
     myTyFam_OccName = mkTcOcc "Elem'"
@@ -63,15 +69,15 @@ lookupElem modCE = do
 
 data Environment = Environment
   { containsTyCon :: TyCon
-  , elemTyCon :: TyCon
+  , elem'TyCon :: TyCon
   }
 
 solveBind :: Environment -> TC.TcPluginSolver
 solveBind _ _ _ [] = pure $ TC.TcPluginOk [] []
 solveBind env@Environment{..} _envBinds _givens wanteds = do
   (unzip3 <$> traverse solve1Wanted wanteds) >>= \case
-    (eg,  _, newWork) -> do
-      pure $ TC.TcPluginOk (mconcat eg) (mconcat newWork) -- todo: TcPluginContradiction when shit hits the fan
+    (eg, _unsolved, newWanteds) -> do
+      pure $ TC.TcPluginOk (mconcat eg) (mconcat newWanteds) -- todo: TcPluginContradiction when shit hits the fan
   where
   solve1Wanted ::
        Ct
@@ -81,21 +87,20 @@ solveBind env@Environment{..} _envBinds _givens wanteds = do
           , [Ct] -- new work
           )
   solve1Wanted unzonkedWanted = TC.zonkCt unzonkedWanted >>= \wanted -> case wanted of
-    CIrredCan (IrredCt {ir_ev = ir_ev@CtWanted{..}}) -> do
+    CIrredCan (IrredCt {ir_ev = CtWanted{..}}) -> do
       if
-        | Just (tc, [_, ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe ctev_pred
+        | Just (tc, [tk, ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe ctev_pred
         , tc == containsTyCon -- Check if it's `Contains`
         -> do
           ty1 <- TC.zonkTcType ty1Unzonked
           ty2 <- TC.zonkTcType ty2Unzonked
           if not (isTyVarTy ty1) && not (isTyVarTy ty2)
-          then
-            pure ([], [wanted], [])
+          then pure mempty
           else do
-            let newWanted = mkNonCanonical (setCtEvPredType ir_ev $ mkContainsConstraint env ty1 ty2)
+            newWanted <- mkNonCanonical <$> TC.newWanted (ctLoc wanted) (mkContainsConstraint env tk ty1 ty2)
             pure
               ( [ (  evCast (ctEvExpr $ ctEvidence newWanted) $
-                     mkUnivCo (PluginProv "checked-exceptions") Phantom (ctPred newWanted) (ctPred wanted)
+                     mkUnivCo (PluginProv "checked-exceptions") Representational (ctPred newWanted) (ctPred wanted)
                    , wanted
                    )
                 ]
@@ -104,40 +109,169 @@ solveBind env@Environment{..} _envBinds _givens wanteds = do
               )
         | Just (tcIf, [ifKind, elemTf, ifTrue, ifFalse]) <- splitTyConApp_maybe ctev_pred
         , getOccName tcIf == mkTcOcc "If"
-        , Just (tcElem, [_, ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe elemTf
-        , tcElem == elemTyCon -- Check if it's `Elem'`
+        , Just (tcElem', [tcKind, ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe elemTf
+        , tcElem' == elem'TyCon -- Check if it's `If (Elem'`
         -> do
+          tcTraceLabel "ctev_pred_1" ctev_pred
           ty1 <- TC.zonkTcType ty1Unzonked
           ty2 <- TC.zonkTcType ty2Unzonked
           if not (isTyVarTy ty1) && not (isTyVarTy ty2)
-          then
-            pure ([], [wanted], [])
+          then pure mempty
           else do
-            let newWanted = mkNonCanonical (setCtEvPredType ir_ev $ mkTyConApp tcIf [ifKind, mkElemConstraint env ty1 ty2, ifTrue, ifFalse])
+            newWanted <- mkNonCanonical <$> TC.newWanted (ctLoc wanted) (mkTyConApp tcIf [ifKind, mkElem'Constraint env tcKind ty1 ty2, ifTrue, ifFalse])
             pure
               ( [ (  evCast (ctEvExpr $ ctEvidence newWanted) $
-                     mkUnivCo (PluginProv "checked-exceptions") Phantom (ctPred newWanted) (ctPred wanted)
+                     mkUnivCo (PluginProv "checked-exceptions") Representational (ctPred newWanted) (ctPred wanted)
                    , wanted
                    )
                 ]
               , []
               , [newWanted]
               )
-        | otherwise -> pure ([], [wanted], [])
+        | Just (tcIf, [ifKind, elemTf, ifTrue, ifFalse]) <- splitTyConApp_maybe ctev_pred
+        , getOccName tcIf == mkTcOcc "If"
+        , Just (tcElem', [ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe elemTf
+        , tcElem' == elem'TyCon -- Check if it's `If (Elem'`
+        -> do
+          tcTraceLabel "ctev_pred" ctev_pred
+          ty1 <- TC.zonkTcType ty1Unzonked
+          ty2 <- TC.zonkTcType ty2Unzonked
+          if not (isTyVarTy ty1) && not (isTyVarTy ty2)
+          then pure mempty
+          else do
+            newWanted <- mkNonCanonical <$> TC.newWanted (ctLoc wanted) (mkTyConApp tcIf [ifKind, mkElem'Constraint env boolTy ty1 ty2, ifTrue, ifFalse])
+            pure
+              ( [ (  evCast (ctEvExpr $ ctEvidence newWanted) $
+                     mkUnivCo (PluginProv "checked-exceptions") Representational (ctPred newWanted) (ctPred wanted)
+                   , wanted
+                   )
+                ]
+              , []
+              , [newWanted]
+              )
+        | Just (tcElem', [tcKind, ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe ctev_pred
+        , tcElem' == elem'TyCon -- Check if it's `Elem'`
+        -> do
+          ty1 <- TC.zonkTcType ty1Unzonked
+          ty2 <- TC.zonkTcType ty2Unzonked
+          tcTraceLabel "ctev_pred" ctev_pred
+          if not (isTyVarTy ty1) && not (isTyVarTy ty2)
+          then
+            pure ([(ctEvTerm (ctEvidence wanted),wanted)], [], [])
+          else do
+            newWanted <- mkNonCanonical <$> TC.newWanted (ctLoc wanted) (mkElem'Constraint env tcKind ty1 ty2)
+            pure
+              ( [ (  evCast (ctEvExpr $ ctEvidence newWanted) $
+                     mkUnivCo (PluginProv "checked-exceptions") Representational (ctPred newWanted) (ctPred wanted)
+                   , wanted
+                   )
+                ]
+              , []
+              , [newWanted]
+              )
+        | Just (tcElem', [ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe ctev_pred
+        , tcElem' == elem'TyCon -- Check if it's `Elem'`
+        -> do
+          ty1 <- TC.zonkTcType ty1Unzonked
+          ty2 <- TC.zonkTcType ty2Unzonked
+          tcTraceLabel "ctev_pred" ctev_pred
+          if not (isTyVarTy ty1) && not (isTyVarTy ty2)
+          then
+            pure ([(ctEvTerm (ctEvidence wanted),wanted)], [], [])
+          else do
+            newWanted <- mkNonCanonical <$> TC.newWanted (ctLoc wanted) (mkElem'Constraint env boolTy ty1 ty2)
+            pure
+              ( [ (  evCast (ctEvExpr $ ctEvidence newWanted) $
+                     mkUnivCo (PluginProv "checked-exceptions") Representational (ctPred newWanted) (ctPred wanted)
+                   , wanted
+                   )
+                ]
+              , []
+              , [newWanted]
+              )
+        | otherwise -> do
+            tcTraceLabel "unwanted2" wanted
+            pure ([], [wanted], [])
+
+    CNonCanonical CtWanted{..} -> if
+        | Just (tcElem', [tcKind, ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe ctev_pred
+        , tcElem' == elem'TyCon -- Check if it's `Elem'`
+        -> do
+          ty1 <- TC.zonkTcType ty1Unzonked
+          ty2 <- TC.zonkTcType ty2Unzonked
+          tcTraceLabel "ctev_pred" ctev_pred
+          if not (isTyVarTy ty1) && not (isTyVarTy ty2)
+          then pure mempty
+          else do
+            newWanted <- mkNonCanonical <$> TC.newWanted (ctLoc wanted) (mkElem'Constraint env tcKind ty1 ty2)
+            pure
+              ( [ (  evCast (ctEvExpr $ ctEvidence newWanted) $
+                     mkUnivCo (PluginProv "checked-exceptions") Representational (ctPred newWanted) (ctPred wanted)
+                   , wanted
+                   )
+                ]
+              , []
+              , [newWanted]
+              )
+        | Just (tcElem', [ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe ctev_pred
+        , tcElem' == elem'TyCon -- Check if it's `Elem'`
+        -> do
+          ty1 <- TC.zonkTcType ty1Unzonked
+          ty2 <- TC.zonkTcType ty2Unzonked
+          tcTraceLabel "ctev_pred" ctev_pred
+          if not (isTyVarTy ty1) && not (isTyVarTy ty2)
+          then pure mempty
+          else do
+            newWanted <- mkNonCanonical <$> TC.newWanted (ctLoc wanted) (mkElem'Constraint env boolTy ty1 ty2)
+            pure
+              ( [ (  evCast (ctEvExpr $ ctEvidence newWanted) $
+                     mkUnivCo (PluginProv "checked-exceptions") Representational (ctPred newWanted) (ctPred wanted)
+                   , wanted
+                   )
+                ]
+              , []
+              , [newWanted]
+              )
+        | otherwise -> do
+            tcTraceLabel "unwanted3" wanted
+            pure ([], [wanted], [])
     _ -> do
+      tcTraceLabel "unwanted" (ctKind wanted, wanted)
       pure ([], [wanted], [])
 
+-- -- | The 'EvTerm' equivalent for 'Unsafe.unsafeCoerce'
+-- evByFiat :: String -- ^ Name the coercion should have
+--          -> Type   -- ^ The LHS of the equivalence relation (~)
+--          -> Type   -- ^ The RHS of the equivalence relation (~)
+--          -> EvTerm
+-- evByFiat name t1 t2 =
+--   EvExpr $ Coercion $ mkUnivCo (PluginProv name) Nominal t1 t2
+
+ctKind :: Ct -> FastString
+ctKind = \case 
+  CDictCan     {} -> "CDictCan     "
+  CIrredCan    {} -> "CIrredCan    "
+  CEqCan       {} -> "CEqCan       "
+  CQuantCan    {} -> "CQuantCan    "
+  CNonCanonical{} -> "CNonCanonical"
+
 -- Create the new Contains constraint with '[], or the weaker of the two types substituted for unsolved type variables
-mkContainsConstraint :: Environment -> Type -> Type -> PredType
-mkContainsConstraint Environment{..} ty1 ty2 = mkTyConApp containsTyCon [tYPEKind, ty1Defaulted, ty2Defaulted]
+mkContainsConstraint :: Environment -> Type -> Type -> Type -> PredType
+mkContainsConstraint Environment{..} tk ty1 ty2 =
+    mkFamilyTyConApp containsTyCon [tk, ty1Defaulted, ty2Defaulted]
   where
     weakest = getWeakest ty1 ty2
-    (ty1Defaulted, ty2Defaulted) = (weakest, weakest)
-    -- defaultTypeVar x = if isTyVarTy x then emptyListKindTy else x
+    (ty1Defaulted, ty2Defaulted) =
+      ( if isTyVarTy ty1 then emptyListKindTy else ty1
+      , weakest
+      )
 
--- Create the new Elem constraint with '[ty1] substituted for unsolved type variables
-mkElemConstraint :: Environment -> Type -> Type -> PredType
-mkElemConstraint Environment{..} ty1 ty2 = mkTyConApp elemTyCon [tYPEKind, ty1, defaultTypeVar ty2]
+emptyListKindTy :: Type
+emptyListKindTy = mkPromotedListTy tYPEKind []
+
+-- Create the new Elem' constraint with '[ty1] substituted for unsolved type variables
+mkElem'Constraint :: Environment -> Type -> Type -> Type -> PredType
+mkElem'Constraint Environment{..} tk ty1 ty2 = mkFamilyTyConApp elem'TyCon [tk, ty1, defaultTypeVar ty2]
   where
     defaultTypeVar x = if isTyVarTy x then mkPromotedListTy tYPEKind [ty1] else x
 
@@ -145,14 +279,14 @@ getWeakest :: Type -> Type -> Type
 getWeakest ty1 ty2 =
   let ty1Tys = if isTyVarTy ty1
                then []
-               else case splitTyConApp_maybe ty1 of
+               else case extractMPromotedList ty1 of
                  Nothing -> []
-                 Just (_,ty) -> ty
+                 Just tys -> tys
       ty2Tys = if isTyVarTy ty2
                then []
-               else case splitTyConApp_maybe ty2 of
+               else case extractMPromotedList ty2 of
                  Nothing -> []
-                 Just (_,ty) -> ty
+                 Just tys -> tys
   in mkPromotedListTy tYPEKind $ nubBy ((==) `on` deBruijnize) (ty1Tys <> ty2Tys)
 
 tcPrintLn :: String -> TC.TcPluginM ()
@@ -166,3 +300,23 @@ tcPrintOutputable = tcPrintLn . showSDocUnsafe . ppr
 
 tcTraceLabel :: Outputable a => String -> a -> TC.TcPluginM ()
 tcTraceLabel label x = tcPluginTrace ("[CHECKED_EXCEPTIONS] " <> label) (ppr x)
+
+-- | Extract the elements of a promoted list. Panics if the type is not a
+-- promoted list
+extractMPromotedList :: Type    -- ^ The promoted list
+                    -> Maybe [Type]
+extractMPromotedList tys = go tys
+  where
+    go list_ty
+      | Just (tc, [_k, t, ts]) <- splitTyConApp_maybe list_ty
+      = assert (tc `hasKey` consDataConKey) $
+        case go ts of
+          Nothing -> Nothing
+          Just ts' -> Just $ t : ts'
+
+      | Just (tc, [_k]) <- splitTyConApp_maybe list_ty
+      = assert (tc `hasKey` nilDataConKey)
+        Just []
+
+      | otherwise
+      = Nothing
