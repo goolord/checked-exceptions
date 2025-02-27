@@ -27,8 +27,7 @@ import qualified Control.Monad.CheckedExcept.QualifiedDo as CheckedExcept
 badTestCE1 :: CheckedExceptT '[Int] IO ()
 badTestCE1 = CheckedExcept.do
   lift $ putStrLn "4"
-  throwCheckedException (1 :: Int)
-  pure ()
+  throwCheckedException 'c'
 
 -- testCE1 :: CheckedExceptT '[()] IO ()
 -- testCE1 = CheckedExcept.do

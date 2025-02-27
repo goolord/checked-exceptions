@@ -6,20 +6,24 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 
 module Control.Monad.CheckedExcept.Plugin.Bind
   ( bindPlugin
+  -- disable unused warnings
   , tcPrintLn
   , tcPrint
   , tcPrintOutputable
-  , tcTraceLabel)
+  , tcTraceLabel
+  , evByFiat
+  )
 where
 
 import GHC.Plugins hiding ((<>))
 import GHC.Tc.Types.Constraint
 import qualified GHC.Tc.Plugin as TC
 import qualified GHC.Tc.Types as TC
-import GHC.Tc.Types.Evidence (EvTerm (..), evCast, mkEvCast)
+import GHC.Tc.Types.Evidence (EvTerm (..), evCast)
 import GHC.Core.TyCo.Rep (UnivCoProvenance(PluginProv))
 import GHC.Tc.Plugin (tcPluginTrace)
 import Data.List (nubBy)
@@ -27,10 +31,6 @@ import GHC.Core.Map.Type (deBruijnize)
 import Data.Function (on)
 import GHC.Types.Unique (hasKey)
 import GHC.Builtin.Names (consDataConKey)
-import GHC.Core.TyCo.Compare (eqType)
-import qualified GHC.Tc.Solver.Solve as TS
-import qualified GHC.Tc.Solver.Monad as TM
-import Data.String (IsString)
 
 bindPlugin :: TcPlugin
 bindPlugin _ = Just $ TC.TcPlugin
@@ -39,6 +39,7 @@ bindPlugin _ = Just $ TC.TcPlugin
       containsTyCon <- lookupContains checkedExceptMod
       elem'TyCon <- lookupElem' checkedExceptMod
       elemTyCon <- lookupElem checkedExceptMod
+      checkedExceptTTyCon <- lookupCheckedExceptT checkedExceptMod
       pure Environment {..}
   , TC.tcPluginSolve = solveBind
   , TC.tcPluginStop = const $ pure ()
@@ -76,10 +77,19 @@ lookupElem modCE = do
   myTyFam_Name <- TC.lookupOrig modCE myTyFam_OccName
   TC.tcLookupTyCon myTyFam_Name
 
+lookupCheckedExceptT :: Module -> TC.TcPluginM TyCon
+lookupCheckedExceptT modCE = do
+  let
+    myTyFam_OccName :: OccName
+    myTyFam_OccName = mkTcOcc "CheckedExceptT"
+  myTyFam_Name <- TC.lookupOrig modCE myTyFam_OccName
+  TC.tcLookupTyCon myTyFam_Name
+
 data Environment = Environment
   { containsTyCon :: TyCon
   , elem'TyCon :: TyCon
   , elemTyCon :: TyCon
+  , checkedExceptTTyCon :: TyCon
   }
 
 solveBind :: Environment -> TC.TcPluginSolver
@@ -96,15 +106,20 @@ solveBind env@Environment{..} _envBinds _givens wanteds = do
           , [Ct] -- unsolved
           , [Ct] -- new work
           )
-  solve1Wanted unzonkedWanted = 
+  solve1Wanted unzonkedWanted =
     TC.zonkCt unzonkedWanted >>= \wanted ->
       let mkNewWanted newPred = do
             mkNonCanonical <$> TC.newWanted (ctLoc wanted) newPred
 
-          transformConstraint label ctev_pred ty1Unzonked ty2Unzonked mkNewPred = do
-            tcTraceLabel ("ctev_pred_" <> label) ctev_pred
-            ty1 <- TC.zonkTcType ty1Unzonked
-            ty2 <- TC.zonkTcType ty2Unzonked
+          noNewWork _ _ = False
+
+          newWorkIfVar ty1 ty2 = isTyVarTy ty1 || isTyVarTy ty2
+
+          transformConstraint label ir_ev ir_reason ty1Unzonked ty2Unzonked hasNewWork mkNewPred = do
+            tcTraceLabel (label <> "_ir_ev") ir_ev
+            tcTraceLabel (label <> "_ir_reason") ir_reason
+            tcTraceLabel (label <> "_ctev_loc") (ctl_origin $ ctev_loc ir_ev)
+            (ty1, ty2) <- disambiguateTypeVarsUsingReturnType env wanted ty1Unzonked ty2Unzonked
             let newPred = mkNewPred ty1 ty2
             if not (isTyVarTy ty1) && not (isTyVarTy ty2)
             then do
@@ -114,40 +129,47 @@ solveBind env@Environment{..} _envBinds _givens wanteds = do
               newWanted <- mkNewWanted newPred
               tcTraceLabel (label <> "_newWanted") (newWanted)
               pure
-                ( [ ( evByFiat "checked-exceptions" (ctPred newWanted) (ctPred wanted)
+                ( [ ( if hasNewWork ty1 ty2
+                      then trustMeBro "checked-exceptions" (ctEvExpr $ ctEvidence wanted) (ctPred wanted) (ctPred newWanted)
+                      else evByFiat "checked-exceptions" (ctPred wanted) newPred
                      , wanted
                      )
                   ]
                 , []
-                , [newWanted]
+                , if hasNewWork ty1 ty2 then [newWanted] else []
                 )
       in
       case wanted of
-        CIrredCan (IrredCt {ir_ev = CtWanted{..}}) -> do
+        CIrredCan (IrredCt {ir_ev = ir_ev@CtWanted{..}, ir_reason}) -> do
           if
+            -- Check if it's `Contains`
             | Just (tc, [tk, ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe ctev_pred
-            , tc == containsTyCon -- Check if it's `Contains`
-            -> transformConstraint "contains" ctev_pred ty1Unzonked ty2Unzonked (mkContainsConstraint env tk)
+            , tc == containsTyCon
+            -> transformConstraint "contains" ir_ev ir_reason ty1Unzonked ty2Unzonked noNewWork (mkContainsPred env tk)
 
+            -- Check if it's `If (Elem'`
             | Just (tcIf, [ifKind, elemTf, ifTrue, ifFalse]) <- splitTyConApp_maybe ctev_pred
             , getOccName tcIf == mkTcOcc "If"
             , Just (tcElem', [tcKind, ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe elemTf
-            , tcElem' == elem'TyCon -- Check if it's `If (Elem'`
-            -> do transformConstraint "if_1" ctev_pred ty1Unzonked ty2Unzonked (\ty1 ty2 -> mkTyConApp tcIf [ifKind, mkElem'Constraint env tcKind ty1 ty2, ifTrue, ifFalse])
+            , tcElem' == elem'TyCon
+            -> do transformConstraint "if_1" ir_ev ir_reason ty1Unzonked ty2Unzonked newWorkIfVar (\ty1 ty2 -> mkTyConApp tcIf [ifKind, mkElem'Type env tcKind ty1 ty2, ifTrue, ifFalse])
 
+            -- Check if it's `If (Elem'`
             | Just (tcIf, [ifKind, elemTf, ifTrue, ifFalse]) <- splitTyConApp_maybe ctev_pred
             , getOccName tcIf == mkTcOcc "If"
             , Just (tcElem', [ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe elemTf
-            , tcElem' == elem'TyCon -- Check if it's `If (Elem'`
-            -> do transformConstraint "if_2" ctev_pred ty1Unzonked ty2Unzonked (\ty1 ty2 -> mkTyConApp tcIf [ifKind, mkElem'Constraint env boolTy ty1 ty2, ifTrue, ifFalse])
+            , tcElem' == elem'TyCon
+            -> do transformConstraint "if_2" ir_ev ir_reason ty1Unzonked ty2Unzonked newWorkIfVar (\ty1 ty2 -> mkTyConApp tcIf [ifKind, mkElem'Type env boolTy ty1 ty2, ifTrue, ifFalse])
 
+            -- Check if it's `Elem`
             | Just (tcElem, [tcKind, ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe ctev_pred
-            , tcElem == elemTyCon -- Check if it's `Elem`
-            -> do transformConstraint "elem_1" ctev_pred ty1Unzonked ty2Unzonked (mkElemConstraint env tcKind)
+            , tcElem == elemTyCon
+            -> do transformConstraint "elem_1" ir_ev ir_reason ty1Unzonked ty2Unzonked newWorkIfVar (mkElemPred env tcKind)
 
+            -- Check if it's `Elem`
             | Just (tcElem, [ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe ctev_pred
-            , tcElem == elemTyCon -- Check if it's `Elem`
-            -> do transformConstraint "elem_2" ctev_pred ty1Unzonked ty2Unzonked (mkElemConstraint env constraintKind)
+            , tcElem == elemTyCon
+            -> do transformConstraint "elem_2" ir_ev ir_reason ty1Unzonked ty2Unzonked newWorkIfVar (mkElemPred env constraintKind)
 
             | otherwise -> do
                 tcTraceLabel "unwanted2" (ctKind wanted, wanted)
@@ -165,8 +187,16 @@ evByFiat :: String -- ^ Name the coercion should have
 evByFiat name t1 t2 =
   EvExpr $ Coercion $ mkUnivCo (PluginProv name) Nominal t1 t2
 
+trustMeBro :: String -- ^ Name the coercion should have
+         -> Expr CoreBndr
+         -> Type   -- ^ The LHS of the equivalence relation (~)
+         -> Type   -- ^ The RHS of the equivalence relation (~)
+         -> EvTerm
+trustMeBro name expr t1 t2 =
+  evCast expr $ mkUnivCo (PluginProv name) Nominal t1 t2
+
 ctKind :: Ct -> FastString
-ctKind = \case 
+ctKind = \case
   CDictCan     {} -> "CDictCan     "
   CIrredCan    {} -> "CIrredCan    "
   CEqCan       {} -> "CEqCan       "
@@ -174,8 +204,8 @@ ctKind = \case
   CNonCanonical{} -> "CNonCanonical"
 
 -- Create the new Contains constraint with '[], or the weaker of the two types substituted for unsolved type variables
-mkContainsConstraint :: Environment -> Type -> Type -> Type -> PredType
-mkContainsConstraint Environment{..} tk ty1 ty2 =
+mkContainsPred :: Environment -> Type -> Type -> Type -> PredType
+mkContainsPred Environment{..} tk ty1 ty2 =
     mkFamilyTyConApp containsTyCon [tk, ty1Defaulted, ty2Defaulted]
   where
     weakest = getWeakest ty1 ty2
@@ -184,19 +214,19 @@ mkContainsConstraint Environment{..} tk ty1 ty2 =
       , weakest
       )
 
+-- Create the new Elem' constraint with '[ty1] substituted for unsolved type variables
+mkElem'Type :: Environment -> Type -> Type -> Type -> Type
+mkElem'Type Environment{..} tk ty1 ty2 = mkFamilyTyConApp elem'TyCon [tk, ty1, defaultTypeVar ty2]
+  where
+    defaultTypeVar x = if isTyVarTy x then mkPromotedListTy tYPEKind [] else x
+
+mkElemPred :: Environment -> Type -> Type -> Type -> PredType
+mkElemPred Environment{..} tk ty1 ty2 = mkFamilyTyConApp elemTyCon [tk, ty1, defaultTypeVar ty2]
+  where
+    defaultTypeVar x = if isTyVarTy x then mkPromotedListTy tYPEKind [] else x
+
 emptyListKindTy :: Type
 emptyListKindTy = mkPromotedListTy tYPEKind []
-
--- Create the new Elem' constraint with '[ty1] substituted for unsolved type variables
-mkElem'Constraint :: Environment -> Type -> Type -> Type -> PredType
-mkElem'Constraint Environment{..} tk ty1 ty2 = mkFamilyTyConApp elem'TyCon [tk, ty1, defaultTypeVar ty2]
-  where
-    defaultTypeVar x = if isTyVarTy x then mkPromotedListTy tYPEKind [ty1] else x
-
-mkElemConstraint :: Environment -> Type -> Type -> Type -> PredType
-mkElemConstraint Environment{..} tk ty1 ty2 = mkFamilyTyConApp elemTyCon [tk, ty1, defaultTypeVar ty2]
-  where
-    defaultTypeVar x = if isTyVarTy x then mkPromotedListTy tYPEKind [ty1] else x
 
 getWeakest :: Type -> Type -> Type
 getWeakest ty1 ty2 =
@@ -243,3 +273,30 @@ extractMPromotedList tys = go tys
 
       | otherwise
       = Nothing
+
+-- Function to disambiguate type variables using the return type of the function from which the wanted constraint arises
+disambiguateTypeVarsUsingReturnType :: Environment -> Ct -> Type -> Type -> TC.TcPluginM (Type, Type)
+disambiguateTypeVarsUsingReturnType Environment {..} wanted ty1 ty2 = do
+  retType <- lookupReturnType (ctLocEnv (ctLoc wanted))
+  tcTraceLabel "retType" retType
+  esType <-
+    if
+      | Just (tc, [esType, _, _]) <-  splitTyConApp_maybe retType
+      , tc == checkedExceptTTyCon
+      -> pure esType
+      | otherwise -> fail "impossibru"
+  tcTraceLabel "esType" esType
+  ty1' <- TC.zonkTcType ty1
+  ty2' <- TC.zonkTcType ty2
+  let disambiguatedTy1 = if isTyVarTy ty1' then esType else ty1'
+      disambiguatedTy2 = if isTyVarTy ty2' then esType else ty2'
+  pure (disambiguatedTy1, disambiguatedTy2)
+
+-- Function to lookup the return type from the environment
+lookupReturnType :: CtLocEnv -> TC.TcPluginM Type
+lookupReturnType env = case ctl_bndrs env of
+  [t] -> case t of
+    TC.TcIdBndr tcid _ -> pure $ idType tcid
+    _ -> fail "Unresolved return type"
+  [] -> fail "No return type found in environment"
+  _ -> fail "Ambiguous return type"
