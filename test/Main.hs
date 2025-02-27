@@ -16,7 +16,7 @@ module Main where
 
 import Test.Tasty
 -- import Test.Tasty.HUnit
-import Control.Monad.CheckedExcept
+-- import Control.Monad.CheckedExcept
 
 main :: IO ()
 main = defaultMain tests

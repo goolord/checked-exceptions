@@ -2,7 +2,6 @@
     -fno-warn-orphans
 #-}
 {-# OPTIONS_GHC -ddump-tc-trace -ddump-to-file
-                -fconstraint-solver-iterations=400
 #-}
 {-# OPTIONS_GHC -fplugin Control.Monad.CheckedExcept.Plugin -fplugin-opt Control.Monad.CheckedExcept.Plugin:verbose  #-}
 
@@ -14,6 +13,7 @@
   , StandaloneDeriving
   , DerivingVia
   , QualifiedDo
+  , FlexibleInstances
 #-}
 
 module CompTest where
@@ -34,7 +34,6 @@ testCE2 = CheckedExcept.do
   throwCheckedException (1 :: Int)
   pure ()
 
-{-
 testCE3 :: CheckedExceptT '[Bool] IO ()
 testCE3 = CheckedExcept.do
   lift $ putStrLn "3"
@@ -46,15 +45,14 @@ testCE4 = CheckedExcept.do
   lift $ putStrLn "4"
   throwCheckedException "err"
   pure ()
--}
 
--- testCE :: CheckedExceptT TestExceptions IO ()
--- testCE = CheckedExcept.do
---   () <- testCE1
---   () <- testCE2
---   () <- testCE3
---   () <- testCE4
---   pure ()
+testCE :: CheckedExceptT TestExceptions IO ()
+testCE = CheckedExcept.do
+  () <- testCE1
+  () <- testCE2
+  () <- testCE3
+  () <- testCE4
+  pure ()
 
 test :: CheckedExcept TestExceptions () -> IO ()
 test ce = case runCheckedExcept ce of
@@ -90,3 +88,4 @@ type TestExceptions = '[(), Int, Bool, String, ()]
 deriving via (ShowException ()) instance CheckedException ()
 deriving via (ShowException Int) instance CheckedException Int
 deriving via (ShowException Bool) instance CheckedException Bool
+deriving via (ShowException String) instance CheckedException [Char]

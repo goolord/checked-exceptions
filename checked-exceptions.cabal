@@ -54,7 +54,8 @@ test-suite test
     , tasty-hunit
     , tasty-quickcheck
     , QuickCheck
-    , checked-exceptions 
+    , checked-exceptions
+    , text
     , mtl
     , transformers
   ghc-options:
