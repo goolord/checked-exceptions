@@ -15,7 +15,7 @@ import qualified Prelude
   , Contains exceptions2 exceptions3
   , Prelude.Monad m
   )
-  => CheckedExceptT exceptions1 m a 
+  => CheckedExceptT exceptions1 m a
   -> (a -> CheckedExceptT exceptions2 m a)
   -> CheckedExceptT exceptions3 m a
 m >>= f = do
@@ -35,7 +35,7 @@ return = Prelude.return
   , Contains exceptions2 exceptions3
   , Prelude.Monad m
   )
-  => CheckedExceptT exceptions1 m x 
+  => CheckedExceptT exceptions1 m x
   -> CheckedExceptT exceptions2 m a
   -> CheckedExceptT exceptions3 m a
 a >> b = weakenExceptions a Prelude.>> weakenExceptions b

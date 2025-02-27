@@ -45,6 +45,8 @@ test-suite test
     test
   main-is:
     Main.hs
+  other-modules:
+    CompTest
   build-depends:
       HUnit
     , tasty

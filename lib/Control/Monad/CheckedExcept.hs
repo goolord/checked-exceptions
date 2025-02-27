@@ -55,6 +55,8 @@ import Unsafe.Coerce (unsafeCoerce)
 import Data.Constraint
 import Data.Typeable (Typeable, cast, eqT)
 import Data.Type.Equality
+import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.Trans (MonadTrans)
 
 newtype CheckedExceptT (exceptions :: [Type]) m a 
   = CheckedExceptT { runCheckedExceptT :: m (Either (OneOf exceptions) a) }
