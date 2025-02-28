@@ -35,6 +35,8 @@ import Data.Function (on)
 import GHC.Types.Unique (hasKey)
 import GHC.Builtin.Names (consDataConKey)
 import GHC.Core.Predicate (Pred(..), classifyPredType)
+import Data.Maybe (listToMaybe, mapMaybe)
+import Data.Bifunctor (second)
 
 bindPlugin :: TcPlugin
 bindPlugin _ = Just $ TC.TcPlugin
@@ -99,8 +101,6 @@ data Environment = Environment
 solveBind :: Environment -> TC.TcPluginSolver
 solveBind _ _ _ [] = pure $ TC.TcPluginOk [] []
 solveBind env@Environment{..} _envBinds _givens wanteds = do
-  fam <- TC.getFamInstEnvs
-  tcTraceLabel "fam" fam
   (unzip3 <$> traverse solve1Wanted wanteds) >>= \case
     (eg, _unsolved, newWanteds) -> do
       pure $ TC.TcPluginOk (mconcat eg) (mconcat newWanteds) -- todo: TcPluginContradiction when shit hits the fan
@@ -117,7 +117,7 @@ solveBind env@Environment{..} _envBinds _givens wanteds = do
       let noNewWork _ _ = False
           yesNewWork _ _ = True
 
-          newWorkIfVar ty1 ty2 = not (isUnified ty1) || not (isUnified ty2)
+          newWorkIfVar ty1 ty2 = not (isUnified ty1 && isUnified ty2)
 
           defWork = yesNewWork
 
@@ -125,17 +125,26 @@ solveBind env@Environment{..} _envBinds _givens wanteds = do
             tcTraceLabel (label <> "_ir_ev") ir_ev
             tcTraceLabel (label <> "_ir_reason") ir_reason
             mtys <- disambiguateTypeVarsUsingReturnType env wanted ty1Unzonked ty2Unzonked
+            let mkNewWanted ty1 ty2 newPred = do
+                  if hasNewWork ty1 ty2
+                  then mkNonCanonical <$> TC.newWanted (ctLoc wanted) newPred
+                  else pure $ mkNonCanonical (setCtEvPredType ir_ev $ newPred)
             case mtys of
               Nothing -> do
-                tcTraceLabel "unambiguous" (ty1Unzonked, ty2Unzonked)
-                pure mempty
+                let newWanted = mkNonCanonical (ctEvidence wanted)
+                pure
+                  ( [ ( trustMeBro "checked-exceptions" (ctEvExpr $ ctEvidence newWanted) (ctPred newWanted) (ctPred wanted)
+                      , wanted
+                      )
+                    ]
+                  , []
+                  , []
+                  )
               Just (ty1, ty2) -> do
-                let mkNewWanted newPred = do
-                      if hasNewWork ty1 ty2
-                      then mkNonCanonical <$> TC.newWanted (ctLoc wanted) newPred
-                      else pure $ mkNonCanonical (setCtEvPredType ir_ev $ newPred)
-                newWanted <- mkNewWanted $ mkNewPred ty1 ty2
-                tcTraceLabel (label <> "_newWanted") (newWanted)
+                let newPred = mkNewPred ty1 ty2
+                newWanted <- mkNewWanted ty1 ty2 $ substituteTypeVar ty2Unzonked ty2 newPred
+                tcTraceLabel (label <> "_wanted") (wanted, newWanted, newPred)
+                tcTraceLabel (label <> "_newWanted") newWanted
                 pure
                   ( [ ( trustMeBro "checked-exceptions" (ctEvExpr $ ctEvidence newWanted) (ctPred newWanted) (ctPred wanted)
                        , wanted
@@ -158,14 +167,14 @@ solveBind env@Environment{..} _envBinds _givens wanteds = do
             , getOccName tcIf == mkTcOcc "If"
             , Just (tcElem', [tcKind, ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe elemTf
             , tcElem' == elem'TyCon
-            -> do transformConstraint "if_1" ir_ev ir_reason ty1Unzonked ty2Unzonked defWork (\ty1 ty2 -> mkTyConApp tcIf [ifKind, mkElem'Type env tcKind ty1 ty2, ifTrue, substituteTypeVar ty2Unzonked ty2 ifFalse])
+            -> do transformConstraint "if_1" ir_ev ir_reason ty1Unzonked ty2Unzonked defWork (\ty1 ty2 -> mkFamilyTyConApp tcIf [ifKind, mkElem'Type env tcKind ty1 ty2, ifTrue, ifFalse])
 
             -- Check if it's `If (Elem'`
             | Just (tcIf, [ifKind, elemTf, ifTrue, ifFalse]) <- splitTyConApp_maybe ctev_pred
             , getOccName tcIf == mkTcOcc "If"
             , Just (tcElem', [ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe elemTf
             , tcElem' == elem'TyCon
-            -> do transformConstraint "if_2" ir_ev ir_reason ty1Unzonked ty2Unzonked defWork (\ty1 ty2 -> mkTyConApp tcIf [ifKind, mkElem'Type env boolTy ty1 ty2, ifTrue, substituteTypeVar ty2Unzonked ty2 ifFalse])
+            -> do transformConstraint "if_2" ir_ev ir_reason ty1Unzonked ty2Unzonked defWork (\ty1 ty2 -> mkFamilyTyConApp tcIf [ifKind, mkElem'Type env boolTy ty1 ty2, ifTrue, ifFalse])
 
             -- Check if it's `Elem`
             | Just (tcElem, [tcKind, ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe ctev_pred
@@ -274,7 +283,10 @@ getWeakest ty1 ty2 =
                else case extractMPromotedList ty2 of
                  Nothing -> []
                  Just tys -> tys
-  in mkPromotedListTy tYPEKind $ nubBy ((==) `on` deBruijnize) (ty1Tys <> ty2Tys)
+  in uniquePromotedList (ty1Tys <> ty2Tys)
+
+uniquePromotedList :: [Type] -> Type
+uniquePromotedList tys = mkPromotedListTy tYPEKind $ nubBy ((==) `on` deBruijnize) tys
 
 tcPrintLn :: String -> TC.TcPluginM ()
 tcPrintLn = TC.tcPluginIO . putStrLn
@@ -313,36 +325,57 @@ disambiguateTypeVarsUsingReturnType :: Environment -> Ct -> Type -> Type -> TC.T
 disambiguateTypeVarsUsingReturnType Environment {..} wanted ty1 ty2 = do
   retType <- lookupReturnType (ctLocEnv (ctLoc wanted))
   tcTraceLabel "retType" retType
-  esType <-
-    if
-      | Just (tc, [esType, _, _]) <-  splitTyConApp_maybe retType
-      , tc == checkedExceptTTyCon
-      -> pure esType
-      | otherwise -> failWithTrace "impossibru"
+  esType <- do
+      let retTyArgs = getRuntimeArgTysOrTy retType
+          ts = mapMaybe (\(st,_) -> do
+                (tc, ts1) <- splitTyConApp_maybe $ irrelevantMult st
+                if tc == checkedExceptTTyCon
+                then do
+                  esType <- case ts1 of
+                    [esType, _, _] -> Just esType
+                    [_, esType, _, _] -> Just esType
+                    _ -> Nothing
+                  extractMPromotedList esType
+                else Nothing
+            ) retTyArgs
+      if not (null ts)
+      then uniquePromotedList <$> traverse TC.zonkTcType (mconcat ts)
+      else do
+        tcTraceLabel "retTyArgs" retTyArgs
+        failWithTrace "impossibru"
   tcTraceLabel "esType" esType
   if isUnified ty1 && isUnified ty2
   then pure Nothing
   else do
     zonkedTy1 <- TC.zonkTcType ty1
     zonkedTy2 <- TC.zonkTcType ty2
-    let disambiguatedTy1 = if isTyVarTy zonkedTy1 then esType else zonkedTy1
-        disambiguatedTy2 = if isTyVarTy zonkedTy2 then esType else zonkedTy2
+    let disambiguatedTy1 = if isUnified zonkedTy1 then zonkedTy1 else esType
+        disambiguatedTy2 = if isUnified zonkedTy2 then zonkedTy2 else esType
+    tcTraceLabel "ambiguous    " (ty1, ty2)
+    tcTraceLabel "disambiguated" (disambiguatedTy1, disambiguatedTy2)
     pure $ Just (disambiguatedTy1, disambiguatedTy2)
 
 isUnified :: Type -> Bool
 isUnified ty =
      isTauTy ty
   && isConcreteType ty
+  && (not $ isTyVarTy ty)
 
 -- Function to lookup the return type from the environment
-lookupReturnType :: CtLocEnv -> TC.TcPluginM Type
+lookupReturnType :: CtLocEnv -> TC.TcPluginM (Type, Arity)
 lookupReturnType env = case ctl_bndrs env of
-  t:_ -> case t of
-    TC.TcIdBndr tcid _ -> pure $ idType tcid
-    _ -> failWithTrace "Unresolved return type"
+  ts@(TC.TcIdBndr tcid _):_ -> do
+      tcTraceLabel "lookupReturnType" ts
+      pure $ (idType tcid, idArity tcid)
   [] -> failWithTrace "No return type found in environment"
+  _ -> failWithTrace "Unresolved return type"
 
 failWithTrace :: forall x. String -> TC.TcPluginM x
 failWithTrace s = do
   tcTraceLabel "fail" (mkFastString s)
   fail s
+
+getRuntimeArgTysOrTy :: (Type, Arity) -> [(Scaled Type, Maybe FunTyFlag)]
+getRuntimeArgTysOrTy (ty, arity) = case arity of
+  0 -> [(unrestricted ty, Nothing)]
+  _ -> fmap (second Just) (getRuntimeArgTys ty)
