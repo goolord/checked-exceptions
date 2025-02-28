@@ -24,69 +24,68 @@ import Control.Monad.CheckedExcept
 import Control.Monad.Trans.Class (lift)
 import qualified Control.Monad.CheckedExcept.QualifiedDo as CheckedExcept
 
-badTestCE1 :: CheckedExceptT '[Int] IO ()
-badTestCE1 = CheckedExcept.do
-  lift $ putStrLn "4"
-  throwCheckedException 'c'
-
--- testCE1 :: CheckedExceptT '[()] IO ()
--- testCE1 = CheckedExcept.do
---   lift $ putStrLn "1"
---   lift $ putStrLn "2"
---   pure ()
---
--- testCE2 :: CheckedExceptT '[Int] IO ()
--- testCE2 = CheckedExcept.do
---   lift $ putStrLn "2"
---   throwCheckedException (1 :: Int)
---   pure ()
---
--- testCE3 :: CheckedExceptT '[Bool] IO ()
--- testCE3 = CheckedExcept.do
---   lift $ putStrLn "3"
---   throwCheckedException False
---   pure ()
---
--- testCE4 :: CheckedExceptT '[String] IO ()
--- testCE4 = CheckedExcept.do
---   lift $ putStrLn "4"
---   throwCheckedException "err"
---   pure ()
---
--- testCE5 :: CheckedExceptT '[Char] IO ()
--- testCE5 = CheckedExcept.do
+-- badTestCE1 :: CheckedExceptT '[Int] IO ()
+-- badTestCE1 = CheckedExcept.do
 --   lift $ putStrLn "4"
 --   throwCheckedException 'c'
---   pure ()
---
--- testCE :: CheckedExceptT TestExceptions IO ()
--- testCE = CheckedExcept.do
---   () <- testCE1
---   () <- testCE2
---   () <- testCE3
---   () <- testCE4
---   () <- testCE5
---   pure ()
 
---
--- test :: CheckedExcept TestExceptions () -> IO ()
--- test ce = case runCheckedExcept ce of
---   Left e -> do 
---     applyAll (putStrLn . encodeException) e
---     -- or
---     withOneOf @() e $ \() -> putStrLn "()"
---     withOneOf @Int e $ \n -> print $ n + 1
---     withOneOf @Bool e $ \_ -> pure ()
---     -- or
---     caseException e
---       (  (\() -> putStrLn "()")
---       <: (\n -> print $ n + 1)
---       <: RecAny (\x -> putStrLn $ encodeException x)
---       -- <: (\b -> putStrLn "bool")
---       -- <: (\s -> putStrLn "string")
---       -- <: RecNil
---       )
---   Right () -> putStrLn "Right"
+testCE1 :: CheckedExceptT '[()] IO ()
+testCE1 = CheckedExcept.do
+  lift $ putStrLn "1"
+  lift $ putStrLn "2"
+  pure ()
+
+testCE2 :: CheckedExceptT '[Int] IO ()
+testCE2 = CheckedExcept.do
+  lift $ putStrLn "2"
+  throwCheckedException (1 :: Int)
+  pure ()
+
+testCE3 :: CheckedExceptT '[Bool] IO ()
+testCE3 = CheckedExcept.do
+  lift $ putStrLn "3"
+  throwCheckedException False
+  pure ()
+
+testCE4 :: CheckedExceptT '[String] IO ()
+testCE4 = CheckedExcept.do
+  lift $ putStrLn "4"
+  throwCheckedException "err"
+  pure ()
+
+testCE5 :: CheckedExceptT '[Char] IO ()
+testCE5 = CheckedExcept.do
+  lift $ putStrLn "4"
+  throwCheckedException 'c'
+  pure ()
+
+testCE :: CheckedExceptT TestExceptions IO ()
+testCE = CheckedExcept.do
+  () <- testCE1
+  () <- testCE2
+  () <- testCE3
+  () <- testCE4
+  () <- testCE5
+  pure ()
+
+test :: CheckedExcept TestExceptions () -> IO ()
+test ce = case runCheckedExcept ce of
+  Left e -> do 
+    applyAll (putStrLn . encodeException) e
+    -- or
+    withOneOf @() e $ \() -> putStrLn "()"
+    withOneOf @Int e $ \n -> print $ n + 1
+    withOneOf @Bool e $ \_ -> pure ()
+    -- or
+    caseException e
+      (  (\() -> putStrLn "()")
+      <: (\n -> print $ n + 1)
+      <: RecAny (\x -> putStrLn $ encodeException x)
+      -- <: (\b -> putStrLn "bool")
+      -- <: (\s -> putStrLn "string")
+      -- <: RecNil
+      )
+  Right () -> putStrLn "Right"
 
 {- 
 -- doens't compile

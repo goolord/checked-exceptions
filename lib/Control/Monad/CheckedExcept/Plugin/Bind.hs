@@ -9,6 +9,8 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+{-# OPTIONS_GHC -Wno-unused-local-binds #-}
+
 module Control.Monad.CheckedExcept.Plugin.Bind
   ( bindPlugin
   -- disable unused warnings
@@ -156,14 +158,14 @@ solveBind env@Environment{..} _envBinds _givens wanteds = do
             , getOccName tcIf == mkTcOcc "If"
             , Just (tcElem', [tcKind, ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe elemTf
             , tcElem' == elem'TyCon
-            -> do transformConstraint "if_1" ir_ev ir_reason ty1Unzonked ty2Unzonked defWork (\ty1 ty2 -> mkTyConApp tcIf [ifKind, mkElem'Type env tcKind ty1 ty2, ifTrue, ifFalse])
+            -> do transformConstraint "if_1" ir_ev ir_reason ty1Unzonked ty2Unzonked defWork (\ty1 ty2 -> mkTyConApp tcIf [ifKind, mkElem'Type env tcKind ty1 ty2, ifTrue, substituteTypeVar ty2Unzonked ty2 ifFalse])
 
             -- Check if it's `If (Elem'`
             | Just (tcIf, [ifKind, elemTf, ifTrue, ifFalse]) <- splitTyConApp_maybe ctev_pred
             , getOccName tcIf == mkTcOcc "If"
             , Just (tcElem', [ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe elemTf
             , tcElem' == elem'TyCon
-            -> do transformConstraint "if_2" ir_ev ir_reason ty1Unzonked ty2Unzonked defWork (\ty1 ty2 -> mkTyConApp tcIf [ifKind, mkElem'Type env boolTy ty1 ty2, ifTrue, ifFalse])
+            -> do transformConstraint "if_2" ir_ev ir_reason ty1Unzonked ty2Unzonked defWork (\ty1 ty2 -> mkTyConApp tcIf [ifKind, mkElem'Type env boolTy ty1 ty2, ifTrue, substituteTypeVar ty2Unzonked ty2 ifFalse])
 
             -- Check if it's `Elem`
             | Just (tcElem, [tcKind, ty1Unzonked, ty2Unzonked]) <- splitTyConApp_maybe ctev_pred
@@ -189,7 +191,7 @@ solveBind env@Environment{..} _envBinds _givens wanteds = do
             EqPred _ ty1Unzonked ty2Unzonked -> do
               (ty1, ty2) <- (,) <$> TC.zonkTcType ty1Unzonked <*> TC.zonkTcType ty2Unzonked
               tcTraceLabel "noncanon" (fsLit "EqPred", ty1, ty2)
-              pure 
+              pure
                 ( [ (evByFiat "checked-exceptions" ty2 ty1,wanted) ]
                 , []
                 , []
@@ -203,6 +205,13 @@ solveBind env@Environment{..} _envBinds _givens wanteds = do
         _ -> do
           tcTraceLabel "unwanted" (ctKind wanted, wanted)
           pure ([], [wanted], [])
+
+-- Function to substitute type variable in ifFalse
+substituteTypeVar :: Type -> Type -> Type -> Type
+substituteTypeVar ty2Unzonked ty2 ifFalse =
+  case getTyVar_maybe ty2Unzonked of
+    Nothing -> ifFalse
+    Just ty2UnzonkedVar -> substTyWith [ty2UnzonkedVar] [ty2] ifFalse
 
 -- | The 'EvTerm' equivalent for 'Unsafe.unsafeCoerce'
 evByFiat :: String -- ^ Name the coercion should have
@@ -328,11 +337,10 @@ isUnified ty =
 -- Function to lookup the return type from the environment
 lookupReturnType :: CtLocEnv -> TC.TcPluginM Type
 lookupReturnType env = case ctl_bndrs env of
-  [t] -> case t of
+  t:_ -> case t of
     TC.TcIdBndr tcid _ -> pure $ idType tcid
     _ -> failWithTrace "Unresolved return type"
   [] -> failWithTrace "No return type found in environment"
-  _ -> failWithTrace "Ambiguous return type"
 
 failWithTrace :: forall x. String -> TC.TcPluginM x
 failWithTrace s = do
