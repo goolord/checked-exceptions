@@ -14,6 +14,7 @@
   , DerivingVia
   , QualifiedDo
   , FlexibleInstances
+  , TypeFamilies
 #-}
 
 module CompTest where
@@ -22,7 +23,6 @@ module CompTest where
 import Control.Monad.CheckedExcept
 import Control.Monad.Trans.Class (lift)
 import qualified Control.Monad.CheckedExcept.QualifiedDo as CheckedExcept
-
 
 badTestCE1 :: CheckedExceptT '[Int] IO ()
 badTestCE1 = CheckedExcept.do
