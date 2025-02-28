@@ -35,7 +35,7 @@ import Data.Function (on)
 import GHC.Types.Unique (hasKey)
 import GHC.Builtin.Names (consDataConKey)
 import GHC.Core.Predicate (Pred(..), classifyPredType)
-import Data.Maybe (listToMaybe, mapMaybe)
+import Data.Maybe (mapMaybe)
 import Data.Bifunctor (second)
 
 bindPlugin :: TcPlugin
@@ -43,7 +43,7 @@ bindPlugin _ = Just $ TC.TcPlugin
   { TC.tcPluginInit = do
       checkedExceptMod <- lookupCheckedExceptMod
       containsTyCon <- lookupContains checkedExceptMod
-      elem'TyCon <- lookupElem' checkedExceptMod
+      (elem'TyCon, elem'Name) <- lookupElem' checkedExceptMod
       elemTyCon <- lookupElem checkedExceptMod
       checkedExceptTTyCon <- lookupCheckedExceptT checkedExceptMod
       pure Environment {..}
@@ -67,13 +67,13 @@ lookupContains modCE = do
   myTyFam_Name <- TC.lookupOrig modCE myTyFam_OccName
   TC.tcLookupTyCon myTyFam_Name
 
-lookupElem' :: Module -> TC.TcPluginM TyCon
+lookupElem' :: Module -> TC.TcPluginM (TyCon, Name)
 lookupElem' modCE = do
   let
     myTyFam_OccName :: OccName
     myTyFam_OccName = mkTcOcc "Elem'"
   myTyFam_Name <- TC.lookupOrig modCE myTyFam_OccName
-  TC.tcLookupTyCon myTyFam_Name
+  (, myTyFam_Name) <$> TC.tcLookupTyCon myTyFam_Name
 
 lookupElem :: Module -> TC.TcPluginM TyCon
 lookupElem modCE = do
@@ -94,16 +94,25 @@ lookupCheckedExceptT modCE = do
 data Environment = Environment
   { containsTyCon :: TyCon
   , elem'TyCon :: TyCon
+  , elem'Name :: Name
   , elemTyCon :: TyCon
   , checkedExceptTTyCon :: TyCon
   }
 
+concatUnzip3 :: [([a],[b],[c])] -> ([a],[b],[c])
+concatUnzip3 xs = (concat a, concat b, concat c)
+    where (a,b,c) = unzip3 xs
+
 solveBind :: Environment -> TC.TcPluginSolver
 solveBind _ _ _ [] = pure $ TC.TcPluginOk [] []
 solveBind env@Environment{..} _envBinds _givens wanteds = do
-  (unzip3 <$> traverse solve1Wanted wanteds) >>= \case
-    (eg, _unsolved, newWanteds) -> do
-      pure $ TC.TcPluginOk (mconcat eg) (mconcat newWanteds) -- todo: TcPluginContradiction when shit hits the fan
+  (solved, insoluable, newCt) <- concatUnzip3 <$> traverse solve1Wanted wanteds
+  tcTraceLabel "insoluable" insoluable
+  pure TC.TcPluginSolveResult
+    { tcPluginInsolubleCts = insoluable
+    , tcPluginSolvedCts = solved
+    , tcPluginNewCts = newCt
+    }
   where
   solve1Wanted ::
        Ct
@@ -192,19 +201,30 @@ solveBind env@Environment{..} _envBinds _givens wanteds = do
         CNonCanonical ev -> do
           -- Ask GHC to attempt to solve the CNonCanonical wanted
           let predType = ctEvPred ev
-          tcTraceLabel "noncanon" predType
           case classifyPredType predType of
             ClassPred{} -> do
               tcTraceLabel "noncanon" (fsLit "ClassPred")
               pure mempty
-            EqPred _ ty1Unzonked ty2Unzonked -> do
-              (ty1, ty2) <- (,) <$> TC.zonkTcType ty1Unzonked <*> TC.zonkTcType ty2Unzonked
-              tcTraceLabel "noncanon" (fsLit "EqPred", ty1, ty2)
-              pure
-                ( [ (evByFiat "checked-exceptions" ty2 ty1,wanted) ]
-                , []
-                , []
-                )
+            EqPred _ ty1 ty2 -> do
+              tcTraceLabel "noncanon" (fsLit "EqPred", splitTyConApp_maybe ty1, predType)
+              if
+                | Just (tcElem, [_, tcElemTy1, tcElemTy2]) <- splitTyConApp_maybe ty1
+                , tcElem == elem'TyCon
+                , Just tcElemTy2List <- extractMPromotedList tcElemTy2 -> do
+                  if deBruijnize tcElemTy1 `elem` fmap deBruijnize tcElemTy2List
+                  then
+                    pure
+                      ( [(evByFiat "checked-exceptions" ty1 ty2, wanted)]
+                      , []
+                      , []
+                      )
+                  else do -- TODO: this clobbers the custom error message
+                    pure
+                      ( []
+                      , []
+                      , []
+                      )
+                | otherwise -> pure mempty
             IrredPred{} -> do
               tcTraceLabel "noncanon" (fsLit "IrredPred")
               pure mempty
@@ -214,6 +234,14 @@ solveBind env@Environment{..} _envBinds _givens wanteds = do
         _ -> do
           tcTraceLabel "unwanted" (ctKind wanted, wanted)
           pure ([], [wanted], [])
+
+-- elem'ToElem :: Environment -> Type -> Type
+-- elem'ToElem Environment{..} ty = if
+--   | Just (tcElem, tys) <- splitTyConApp_maybe ty
+--   , tcElem == elem'TyCon
+--   , Just tyErr <- deepUserTypeError_maybe (mkTyConApp elemTyCon tys)
+--   -> tyErr
+--   | otherwise -> ty
 
 -- Function to substitute type variable in ifFalse
 substituteTypeVar :: Type -> Type -> Type -> Type
@@ -251,10 +279,9 @@ mkContainsPred :: Environment -> Type -> Type -> Type -> PredType
 mkContainsPred Environment{..} tk ty1 ty2 =
     mkFamilyTyConApp containsTyCon [tk, ty1Defaulted, ty2Defaulted]
   where
-    weakest = getWeakest ty1 ty2
     (ty1Defaulted, ty2Defaulted) =
       ( if isTyVarTy ty1 then emptyListKindTy else ty1
-      , weakest
+      , ty2
       )
 
 -- Create the new Elem' constraint with '[ty1] substituted for unsolved type variables
@@ -270,20 +297,6 @@ mkElemPred Environment{..} tk ty1 ty2 = mkFamilyTyConApp elemTyCon [tk, ty1, def
 
 emptyListKindTy :: Type
 emptyListKindTy = mkPromotedListTy tYPEKind []
-
-getWeakest :: Type -> Type -> Type
-getWeakest ty1 ty2 =
-  let ty1Tys = if isTyVarTy ty1
-               then []
-               else case extractMPromotedList ty1 of
-                 Nothing -> []
-                 Just tys -> tys
-      ty2Tys = if isTyVarTy ty2
-               then []
-               else case extractMPromotedList ty2 of
-                 Nothing -> []
-                 Just tys -> tys
-  in uniquePromotedList (ty1Tys <> ty2Tys)
 
 uniquePromotedList :: [Type] -> Type
 uniquePromotedList tys = mkPromotedListTy tYPEKind $ nubBy ((==) `on` deBruijnize) tys
@@ -364,7 +377,7 @@ isUnified ty =
 -- Function to lookup the return type from the environment
 lookupReturnType :: CtLocEnv -> TC.TcPluginM (Type, Arity)
 lookupReturnType env = case ctl_bndrs env of
-  ts@(TC.TcIdBndr tcid _):_ -> do
+  ts@(TC.TcIdBndr tcid _:_) -> do
       tcTraceLabel "lookupReturnType" ts
       pure $ (idType tcid, idArity tcid)
   [] -> failWithTrace "No return type found in environment"
