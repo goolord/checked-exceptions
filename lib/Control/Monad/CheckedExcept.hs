@@ -28,6 +28,7 @@ module Control.Monad.CheckedExcept
   -- type families / constraints
   , Contains
   , Elem
+  , NotElemTypeError
   , Nub
   , Remove
   , type (++)
@@ -65,7 +66,7 @@ newtype CheckedExceptT (exceptions :: [Type]) m a
 
 type CheckedExcept es a = CheckedExceptT es Identity a
 
-weakenExceptions :: forall exceptions1 exceptions2 m a. 
+weakenExceptions :: forall exceptions1 exceptions2 m a.
      Functor m
   => Contains exceptions1 exceptions2 
   => CheckedExceptT exceptions1 m a
@@ -163,10 +164,12 @@ type family Elem' x xs where
 -- type Elem x xs = Elem' x xs ~ 'True
 -- sometimes causes weird type errors when it doesn't propagate correctly ??
 type family Elem x xs :: Constraint where
-  Elem x xs = 
+  Elem x xs =
     If (Elem' x xs)
       (() :: Constraint)
-      (TypeError ('ShowType x ':<>: 'Text " is not a member of " ':<>: 'ShowType xs))
+      (NotElemTypeError x xs)
+
+type NotElemTypeError x xs = TypeError ('ShowType x ':<>: 'Text " is not a member of " ':<>: 'ShowType xs)
 
 type family Contains (as :: [k]) (bs :: [k]) :: Constraint where
   Contains '[] _ = ()
