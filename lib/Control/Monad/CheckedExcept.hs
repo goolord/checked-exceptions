@@ -23,7 +23,7 @@ module Control.Monad.CheckedExcept
     CheckedExceptT(..)
   , CheckedExcept
   , OneOf(..)
-  , Rec(..)
+  , CaseException(..)
   , ShowException(..)
   -- type families / constraints
   , Contains
@@ -113,18 +113,18 @@ newtype ShowException a = ShowException a
 instance (Show a, Typeable a) => CheckedException (ShowException a) where
   encodeException (ShowException x) = show x
 
-data OneOf (es :: [Type]) where 
+data OneOf (es :: [Type]) where
   OneOf :: forall e es. (Elem e es, CheckedException e, Typeable e) => !e -> OneOf es
 
-data Rec x es where
-  RecNil :: Rec x '[]
-  RecCons :: Typeable e => (e -> x) -> Rec x es -> Rec x (e ': es)
-  RecAny :: (forall e. CheckedException e => (e -> x)) -> Rec x es
+data CaseException x es where
+  CaseEnd :: CaseException x '[]
+  CaseCons :: Typeable e => (e -> x) -> CaseException x es -> CaseException x (e ': es)
+  CaseAny :: (forall e. CheckedException e => (e -> x)) -> CaseException x es
 
 -- | infix RecCons with proper fixity
 infixr 7 <:
-(<:) :: Typeable e => (e -> x) -> Rec x es -> Rec x (e : es)
-(<:) = RecCons
+(<:) :: Typeable e => (e -> x) -> CaseException x es -> CaseException x (e : es)
+(<:) = CaseCons
 
 throwCheckedException :: forall e es m a. (Elem e es, CheckedException e, Applicative m) => e -> CheckedExceptT es m a
 throwCheckedException e = do
@@ -181,14 +181,14 @@ type family NonEmpty xs :: Constraint where
   NonEmpty _ = () :: Constraint
 
 -- todo: exceptions can show up more than once in the list..
-caseException :: NonEmpty es => OneOf es -> Rec x (Nub es) -> x
+caseException :: NonEmpty es => OneOf es -> CaseException x (Nub es) -> x
 caseException (OneOf e') = go e'
   where
   test :: (Typeable e1, Typeable e2) => e2 -> (e1 -> x) -> Maybe (e1 :~: e2)
   test _ _ = eqT
-  go :: (CheckedException e, Typeable e) => e -> Rec x es -> x
-  go e (RecCons f rec) = case test e f of
+  go :: (CheckedException e, Typeable e) => e -> CaseException x es -> x
+  go e (CaseCons f rec) = case test e f of
     Just Refl -> f e
     Nothing -> go e rec
-  go e (RecAny f) = f e
-  go _ RecNil = error "impossible"
+  go e (CaseAny f) = f e
+  go _ CaseEnd = error "impossible"
