@@ -214,7 +214,7 @@ disambiguateTypeVarsUsingReturnType Environment {..} wanted ty1 ty2 = do
       let retTyArgs = getRuntimeArgTysOrTy retType
           ts = mapMaybe (\(st,_) -> do
                 (tc, _, ts1) <- splitTyConAppIgnoringKind $ irrelevantMult st
-                if tc == checkedExceptTTyCon
+                if tc == checkedExceptTTyCon -- todo: inspect this type if it's a newtype wrapper
                 then do
                   esType <- case ts1 of
                     [esType, _, _] -> Just esType
