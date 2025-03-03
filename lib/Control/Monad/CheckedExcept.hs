@@ -18,7 +18,7 @@
   , ConstraintKinds
 #-}
 
-module Control.Monad.CheckedExcept 
+module Control.Monad.CheckedExcept
   ( -- types
     CheckedExceptT(..)
   , CheckedExcept
@@ -57,18 +57,18 @@ import Data.Constraint
 import Data.Typeable (Typeable, cast, eqT)
 import Data.Type.Equality
 import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.Trans (MonadTrans)
+import Control.Monad.Trans (MonadTrans (..))
 
-newtype CheckedExceptT (exceptions :: [Type]) m a 
+newtype CheckedExceptT (exceptions :: [Type]) m a
   = CheckedExceptT { runCheckedExceptT :: m (Either (OneOf exceptions) a) }
-  deriving (Monad, Applicative, Functor, MonadFail, MonadIO) via (ExceptT (OneOf exceptions) m)
+  deriving (Monad, Applicative, Functor, MonadFail, MonadIO, MonadError (OneOf exceptions)) via (ExceptT (OneOf exceptions) m)
   deriving (MonadTrans) via (ExceptT (OneOf exceptions))
 
 type CheckedExcept es a = CheckedExceptT es Identity a
 
 weakenExceptions :: forall exceptions1 exceptions2 m a.
      Functor m
-  => Contains exceptions1 exceptions2 
+  => Contains exceptions1 exceptions2
   => CheckedExceptT exceptions1 m a
   -> CheckedExceptT exceptions2 m a
 weakenExceptions (CheckedExceptT ma) = CheckedExceptT $ do
@@ -77,17 +77,17 @@ weakenExceptions (CheckedExceptT ma) = CheckedExceptT $ do
     Right a -> Right a
 
 weakenOneOf :: forall exceptions1 exceptions2.
-     Contains exceptions1 exceptions2 
+     Contains exceptions1 exceptions2
   => OneOf exceptions1
   -> OneOf exceptions2
 weakenOneOf (OneOf e') = weakenE e'
   where
   weakenE :: forall e.
       ( Elem e exceptions1
-      , CheckedException e 
+      , CheckedException e
       , Typeable e
       )
-    => e 
+    => e
     -> OneOf exceptions2
   weakenE e = do
     -- idk how to safely prove this, but the `Contains` constraint guarentees this is true/safe
