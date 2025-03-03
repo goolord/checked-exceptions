@@ -1,13 +1,15 @@
-{-# LANGUAGE ViewPatterns #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE MultiWayIf #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE OverloadedRecordDot #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE
+    ViewPatterns
+  , OverloadedStrings
+  , NamedFieldPuns
+  , LambdaCase
+  , TupleSections
+  , RecordWildCards
+  , MultiWayIf
+  , TypeApplications
+  , OverloadedRecordDot
+  , ScopedTypeVariables
+#-}
 
 {-# OPTIONS_GHC -Wno-unused-local-binds #-}
 

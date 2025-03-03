@@ -6,7 +6,7 @@
 
 module Control.Monad.CheckedExcept.QualifiedDo where
 
-import Control.Monad.CheckedExcept 
+import Control.Monad.CheckedExcept
 import Prelude hiding (Monad(..), Applicative(..))
 import qualified Prelude
 
