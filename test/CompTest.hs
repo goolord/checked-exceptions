@@ -80,10 +80,13 @@ test ce = case runCheckedExcept ce of
     caseException e
       (  (\() -> putStrLn "()")
       <: (\n -> print $ n + 1)
+      <: (\_b -> putStrLn "bool")
+      <: (\_s -> putStrLn "string")
+      <: CaseEnd
+      )
+    caseException e
+      (  (\() -> putStrLn "()")
       <: CaseAny (\x -> putStrLn $ encodeException x)
-      -- <: (\b -> putStrLn "bool")
-      -- <: (\s -> putStrLn "string")
-      -- <: CaseEnd
       )
   Right () -> putStrLn "Right"
 
