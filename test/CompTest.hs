@@ -59,8 +59,8 @@ testCE5 = CheckedExcept.do
   throwCheckedException 'c'
   pure ()
 
-testCE :: CheckedExceptT TestExceptions IO ()
-testCE = CheckedExcept.do
+testCE :: CheckedExceptStack ()
+testCE = CheckedExceptStack $ CheckedExcept.do
   () <- testCE1
   () <- testCE2
   () <- testCE3
@@ -70,7 +70,7 @@ testCE = CheckedExcept.do
 
 test :: CheckedExcept TestExceptions () -> IO ()
 test ce = case runCheckedExcept ce of
-  Left e -> do 
+  Left e -> do
     applyAll (putStrLn . encodeException) e
     -- or
     withOneOf @() e $ \() -> putStrLn "()"
@@ -104,3 +104,5 @@ deriving via (ShowException Int) instance CheckedException Int
 deriving via (ShowException Bool) instance CheckedException Bool
 deriving via (ShowException String) instance CheckedException [Char]
 deriving via (ShowException Char) instance CheckedException Char
+
+newtype CheckedExceptStack a = CheckedExceptStack { runCheckedExceptStack :: CheckedExceptT TestExceptions IO a }

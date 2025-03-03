@@ -32,10 +32,11 @@ import GHC.Tc.Plugin (tcPluginTrace)
 import Data.List (nubBy)
 import GHC.Types.Unique (hasKey)
 import GHC.Builtin.Names (consDataConKey)
-import Data.Maybe (mapMaybe)
+import Data.Maybe (mapMaybe, listToMaybe)
 import Data.Bifunctor (second)
 import GHC.Core.Reduction (Reduction(..))
 import GHC.Tc.Utils.TcType (eqType)
+import Control.Monad (join)
 
 {-
     ************************************************************
@@ -208,25 +209,29 @@ substElem _env _ty1 ty2 predTy =
 -- Function to disambiguate type variables using the return type of the function from which the wanted constraint arises
 disambiguateTypeVarsUsingReturnType :: Environment -> Ct -> Type -> Type -> TC.TcPluginM (Maybe (Type, Type))
 disambiguateTypeVarsUsingReturnType Environment {..} wanted ty1 ty2 = do
-  retType <- lookupReturnType (ctLocEnv (ctLoc wanted))
-  tcTraceLabel "retType" retType
+  fnType <- lookupReturnType (ctLocEnv (ctLoc wanted))
+  tcTraceLabel "fnType" fnType
   esType <- do
-      let retTyArgs = getRuntimeArgTysOrTy retType
-          ts = mapMaybe (\(st,_) -> do
-                (tc, _, ts1) <- splitTyConAppIgnoringKind $ irrelevantMult st
-                if tc == checkedExceptTTyCon -- todo: inspect this type if it's a newtype wrapper
-                then do
+      let fnTyArgs = getRuntimeArgTysOrTy fnType
+          mts = case lastMaybe fnTyArgs of
+                Just (st,_) -> do
+                  ts1 <- findTyArgs checkedExceptTTyCon (irrelevantMult st)
                   esType <- case ts1 of
                     [esType, _, _] -> Just esType
                     _ -> Nothing
                   extractMPromotedList esType
-                else Nothing
-            ) retTyArgs
-      if not (null ts)
-      then uniquePromotedList <$> traverse TC.zonkTcType (mconcat ts)
-      else do
-        tcTraceLabel "retTyArgs" retTyArgs
-        failWithTrace "impossibru"
+                Nothing -> Nothing
+      case mts of
+        Just ts ->  uniquePromotedList <$> traverse TC.zonkTcType ts
+        Nothing -> do
+
+          let ts1 = case lastMaybe fnTyArgs of
+                Just (st,_) -> do
+                  findTyArgs checkedExceptTTyCon (irrelevantMult st)
+                Nothing -> Nothing
+          tcTraceLabel "fnTyArgs" fnTyArgs
+          tcTraceLabel "ts1" ts1
+          failWithTrace "impossibru"
   tcTraceLabel "esType" esType
   if isUnified ty1 && isUnified ty2
   then pure Nothing
@@ -407,3 +412,13 @@ getRuntimeArgTysOrTy :: (Type, Arity) -> [(Scaled Type, Maybe FunTyFlag)]
 getRuntimeArgTysOrTy (ty, arity) = case arity of
   0 -> [(unrestricted ty, Nothing)]
   _ -> fmap (second Just) (getRuntimeArgTys ty)
+
+findTyArgs :: TyCon -> Type -> Maybe [Type]
+findTyArgs findTyCon ty = do
+  (tyCon, _, tys) <- splitTyConAppIgnoringKind ty
+  if tyCon == findTyCon
+  then Just tys
+  else
+    case instNewTyCon_maybe tyCon tys of
+      Nothing -> join $ listToMaybe $ fmap (findTyArgs findTyCon) tys
+      Just (ty', _) -> findTyArgs findTyCon ty'
