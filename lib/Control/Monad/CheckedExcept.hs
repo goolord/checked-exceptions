@@ -57,12 +57,12 @@ import Data.Functor.Identity
 import Data.Kind
 import Data.Type.Bool
 import GHC.TypeLits
-import Unsafe.Coerce (unsafeCoerce)
 import Data.Constraint
 import Data.Typeable (Typeable, cast, eqT)
 import Data.Type.Equality
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Trans (MonadTrans (..))
+import Data.Constraint.Unsafe (unsafeCoerceConstraint)
 
 -- | isomorphic to 'ExceptT' over our open-union exceptions type
 -- 'OneOf es'. because many effects systems have an 'ExceptT' analogue,
@@ -107,8 +107,16 @@ weakenOneOf (OneOf e') = weakenE e'
   weakenE e = do
     -- idk how to safely prove this, but the `Contains` constraint guarentees this is true/safe
     let dict1 :: Dict (Elem e exceptions2)
-        dict1 = unsafeCoerce (Dict @(Elem e exceptions1))
+        dict1 = proveElem @exceptions1 @exceptions2 @e
     OneOf e \\ dict1
+
+-- | Prove that if 'e' is an element of 'exceptions1' and 'exceptions1' is a subset of 'exceptions2',
+-- then 'e' is an element of 'exceptions2'.
+proveElem :: forall exceptions1 exceptions2 e.
+  ( Contains exceptions1 exceptions2
+  , Elem e exceptions1
+  ) => Dict (Elem e exceptions2)
+proveElem = withDict (unsafeCoerceConstraint :: (Elem e exceptions1, Contains exceptions1 exceptions2) :- (Elem e exceptions2)) Dict
 
 -- get the error from 'CheckedExcept'
 runCheckedExcept :: CheckedExcept es a -> Either (OneOf es) a
