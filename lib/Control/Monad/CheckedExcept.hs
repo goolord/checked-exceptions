@@ -19,9 +19,9 @@
 #-}
 {-# LANGUAGE PatternSynonyms #-}
 
--- | basic api of CheckedExceptT
+-- | Basic API of t'CheckedExceptT'
 module Control.Monad.CheckedExcept
-  ( -- * types
+  ( -- * Types
     CheckedExceptT(..)
   , CheckedExcept
   , OneOf(..)
@@ -29,16 +29,18 @@ module Control.Monad.CheckedExcept
   , pattern CaseEnd
   , ShowException(..)
   , ExceptionException(..)
-  -- * type families / constraints
+  -- * Type families / constraints
   , Contains
   , Elem
+  , Elem'
+  , NonEmpty
   , NotElemTypeError
   , Nub
   , Remove
   , type (++)
-  -- * typeclass
+  -- * Typeclass
   , CheckedException(..)
-  -- * utility functions
+  -- * Utility functions
   , runCheckedExcept
   , throwCheckedException
   , applyAll
@@ -65,19 +67,18 @@ import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Trans (MonadTrans (..))
 import Data.Constraint.Unsafe (unsafeCoerceConstraint)
 
--- | isomorphic to 'ExceptT' over our open-union exceptions type
--- 'OneOf es'. because many effects systems have an 'ExceptT' analogue,
--- this would be pretty simple to port to any effects system.
--- see "Control.Monad.CheckedExcept.QualifiedDo" for example usages
+-- | Isomorphic to t'ExceptT' over our open-union exceptions type @t'OneOf' es@.
+-- Because many effects systems have an t'ExceptT' analogue, this would be pretty simple to port to any effects system.
+-- See "Control.Monad.CheckedExcept.QualifiedDo" for example usages.
 newtype CheckedExceptT (exceptions :: [Type]) m a
   = CheckedExceptT { runCheckedExceptT :: m (Either (OneOf exceptions) a) }
   deriving (Monad, Applicative, Functor, MonadFail, MonadIO, MonadError (OneOf exceptions)) via (ExceptT (OneOf exceptions) m)
   deriving (MonadTrans) via (ExceptT (OneOf exceptions))
 
--- | pure checked exceptions
+-- | Pure checked exceptions.
 type CheckedExcept es a = CheckedExceptT es Identity a
 
--- | see 'weakenOneOf'
+-- | See 'weakenOneOf'.
 weakenExceptions :: forall exceptions1 exceptions2 m a.
      Functor m
   => Contains exceptions1 exceptions2
@@ -88,10 +89,10 @@ weakenExceptions (CheckedExceptT ma) = CheckedExceptT $ do
     Left e -> Left $ weakenOneOf @exceptions1 @exceptions2 e
     Right a -> Right a
 
--- | Given a proof that 'exceptions1' is a subset of 'exceptions2',
--- reconstruct the value of the 'OneOf exceptions1' open union to be part of the larger
--- 'OneOf exceptions2' open union. this allows us to compose 'Control.Monad.CheckedExcept.CheckedExceptT' stacks
--- with differing exception sets
+-- | Given a proof that @exceptions1@ is a subset of @exceptions2@,
+-- reconstruct the value of the @t'OneOf' exceptions1@ open union to be part of the larger
+-- @t'OneOf' exceptions2@ open union. This allows us to compose t'Control.Monad.CheckedExcept.CheckedExceptT' stacks
+-- with differing exception sets.
 weakenOneOf :: forall exceptions1 exceptions2.
      Contains exceptions1 exceptions2
   => OneOf exceptions1
@@ -106,28 +107,28 @@ weakenOneOf (OneOf e') = weakenE e'
     => e
     -> OneOf exceptions2
   weakenE e = do
-    -- idk how to safely prove this, but the `Contains` constraint guarentees this is true/safe
+    -- I don't know how to safely prove this, but the `Contains` constraint guarantees this is true/safe.
     let dict1 :: Dict (Elem e exceptions2)
         dict1 = proveElem @exceptions1 @exceptions2 @e
     OneOf e \\ dict1
 
--- | Prove that if 'e' is an element of 'exceptions1' and 'exceptions1' is a subset of 'exceptions2',
--- then 'e' is an element of 'exceptions2'.
+-- | Prove that if @e@ is an element of @exceptions1@ and @exceptions1@ is a subset of @exceptions2@,
+-- then @e@ is an element of @exceptions2@.
 proveElem :: forall exceptions1 exceptions2 e.
   ( Contains exceptions1 exceptions2
   , Elem e exceptions1
   ) => Dict (Elem e exceptions2)
 proveElem = withDict (unsafeCoerceConstraint :: (Elem e exceptions1, Contains exceptions1 exceptions2) :- (Elem e exceptions2)) Dict
 
--- | get the error from 'CheckedExcept'
+-- | Get the error from t'CheckedExcept'.
 runCheckedExcept :: CheckedExcept es a -> Either (OneOf es) a
 runCheckedExcept ce = runIdentity (runCheckedExceptT ce)
 
--- | the class for checked exceptions
+-- | The class for checked exceptions.
 class Typeable e => CheckedException e where
-  -- | encode an exception to 'String'. defaults to 'displayException' when available.
+  -- | Encode an exception to 'String'. Defaults to 'displayException' when available.
   encodeException :: e -> String
-  -- | reify the exception. defaults to 'withOneOf\' e cast'
+  -- | Reify the exception. Defaults to @'withOneOf\'' e cast@.
   fromOneOf :: forall es. OneOf es -> Maybe e
 
   default encodeException :: Exception e => e -> String
@@ -143,7 +144,7 @@ newtype ShowException a = ShowException a
 instance (Show a, Typeable a) => CheckedException (ShowException a) where
   encodeException (ShowException x) = show x
 
--- | DerivingVia newtype wrapper to derive 'Control.Monad.CheckedExcept.CheckedException' from 'Exception'
+-- | DerivingVia newtype wrapper to derive 'Control.Monad.CheckedExcept.CheckedException' from 'Exception'.
 newtype ExceptionException a = ExceptionException a
 
 instance (Show a, Typeable a, Exception a) => CheckedException (ExceptionException a) where
@@ -152,46 +153,46 @@ instance (Show a, Typeable a, Exception a) => CheckedException (ExceptionExcepti
 deriving via (ExceptionException SomeException) instance CheckedException SomeException
 
 -- | A sort of pseudo-open union that is easy to construct but difficult to
--- deconstruct. in lieu of singletons we opt for 'Typeable' to prove the type
--- of the existentially quantified exception 'e' in the set 'es'
+-- deconstruct. In lieu of singletons we opt for 'Typeable' to prove the type
+-- of the existentially quantified exception @e@ in the set @es@.
 data OneOf (es :: [Type]) where
   OneOf :: forall e es. (Elem e es, CheckedException e, Typeable e) => !e -> OneOf es
 
--- | data type used for constructing a coverage checked case-like `catch`
+-- | Data type used for constructing a coverage checked case-like `catch`.
 data CaseException x es where
   CaseEndWith :: x -> CaseException x '[]
   CaseCons :: Typeable e => (e -> x) -> CaseException x es -> CaseException x (e ': es)
   CaseAny :: (forall e. CheckedException e => (e -> x)) -> CaseException x es
 
--- | pattern synonym for `CaseEndWith (error "impossible")` since 'caseException' does not
--- accept empty lists
+-- | Pattern synonym for @CaseEndWith (error "impossible")@.
+-- This should never be evaluated since 'caseException' does not accept empty lists.
 pattern CaseEnd :: forall x. CaseException x '[]
 pattern CaseEnd <- _ where
   CaseEnd = CaseEndWith (error "impossible")
 
--- | infix CaseCons with proper fixity
+-- | Infix 'CaseCons' with proper fixity.
 infixr 7 <:
 (<:) :: Typeable e => (e -> x) -> CaseException x es -> CaseException x (e : es)
 (<:) = CaseCons
 
--- | throw a checked exception 'e' that is a member of the exception set 'es'
+-- | Throw a checked exception @e@ that is a member of the exception set @es@.
 throwCheckedException :: forall e es m a. (Elem e es, CheckedException e, Applicative m) => e -> CheckedExceptT es m a
 throwCheckedException e = do
   let oneOf :: OneOf es
       oneOf = OneOf e
   CheckedExceptT $ pure $ Left oneOf
 
--- | apply a function 'f' over a checked exception, using methods from the 'Control.Monad.CheckedExcept.CheckedException' typeclass
+-- | Apply a function @f@ over a checked exception, using methods from the 'Control.Monad.CheckedExcept.CheckedException' typeclass.
 applyAll :: (forall e. CheckedException e => e -> b) -> OneOf es -> b
 applyAll f (OneOf e) = f e
 
--- | catch an exception or 'mempty' (think 'pure ()' or 'Nothing')
+-- | Catch an exception or @mempty@ (think 'pure ()' or 'Nothing').
 withOneOf :: (Elem e es, Monoid a, CheckedException e) => OneOf es -> (e -> a) -> a
 withOneOf e f = case fromOneOf e of
   Just x -> f x
   Nothing -> mempty
 
--- | catch an exception, totally
+-- | Catch an exception, totally.
 withOneOf' :: OneOf es -> (forall e. (Elem e es, CheckedException e, Typeable e) => e -> a) -> a
 withOneOf' (OneOf e) f = f e
 
@@ -200,7 +201,7 @@ type family Nub xs where
   Nub '[] = '[]
   Nub (x ': xs) = x ': Nub (Remove x xs)
 
--- | type-level list concatenation
+-- | Type-level list concatenation.
 infixr 5 ++
 type family (++) (xs :: [k]) (ys :: [k]) :: [k] where
     '[]       ++ ys = ys
@@ -212,40 +213,40 @@ type family Remove x xs where
   Remove x (x ': ys) =      Remove x ys
   Remove x (y ': ys) = y ': Remove x ys
 
--- | is `x` present in the list `xs`?
+-- | Is @x@ present in the list @xs@?
 type family Elem' x xs where
   Elem' x '[] = 'False
   Elem' x (x ': xs) = 'True
   Elem' x (y ': xs) = Elem' x xs
 
--- | type Elem x xs = Elem' x xs ~ 'True
--- sometimes causes weird type errors when it doesn't propagate correctly ??
+-- | @ type Elem x xs = Elem' x xs ~ 'True @
+-- Sometimes causes weird type errors when it doesn't propagate correctly.
 type family Elem x xs :: Constraint where
   Elem x xs =
     If (Elem' x xs)
       (() :: Constraint)
       (NotElemTypeError x xs)
 
--- | type error for when 'Elem e es' fails to hold
+-- | Type error for when @'Elem' e es'@ fails to hold.
 type NotElemTypeError x xs = TypeError ('ShowType x ':<>: 'Text " is not a member of " ':<>: 'ShowType xs)
 
--- | constraint that the list 'as' is a subset of list 'bs'
+-- | Constraint that the list @as@ is a subset of list @bs@.
 type family Contains (as :: [k]) (bs :: [k]) :: Constraint where
   Contains '[] _ = ()
   Contains as as = ()
   Contains (a ': as) bs = (Elem' a bs ~ 'True, Contains as bs)
 
--- | type-level proof that a list is non-empty, used for constraining 'caseException' so that you don't
--- pointlessly throw error
+-- | Type-level proof that a list is non-empty, used for constraining 'caseException' so that you don't
+-- pointlessly throw @'error'@.
 type family NonEmpty xs :: Constraint where
   NonEmpty '[] = TypeError ('Text "type level list must be non-empty")
   NonEmpty _ = () :: Constraint
 
--- TODO: exceptions can show up more than once in the list, which we handle with
--- 'Nub', but the error message we give to the use for trying to catch an exception
--- twice is really bad
+-- TODO: Exceptions can show up more than once in the list, which we handle with
+-- 'Nub', but the error message we give to the user for trying to catch an exception
+-- twice is really bad.
 --
--- | case on a checked exception with coverage checking. note: while 'es' may not be a set,
+-- | Case on a checked exception with coverage checking. Note: while @es@ may not be a set,
 -- the 'CaseException' you supply must be.
 caseException :: NonEmpty es => OneOf es -> CaseException x (Nub es) -> x
 caseException (OneOf e') = go e'
@@ -259,7 +260,7 @@ caseException (OneOf e') = go e'
   go e (CaseAny f) = f e
   go _ (CaseEndWith x) = x
 
--- | add 'SomeException' to the exceptions set. preferably, call this before catching the checked
+-- | Add 'SomeException' to the exceptions set. Preferably, call this before catching the checked
 -- exceptions so there are no surprising exceptions.
 catchSomeException :: (Monad m, MonadIO m) => Elem SomeException es => CheckedExceptT es m ()
 catchSomeException = do

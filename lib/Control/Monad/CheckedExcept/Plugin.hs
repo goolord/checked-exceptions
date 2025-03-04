@@ -7,7 +7,7 @@ import GHC.Plugins
 import Control.Monad.CheckedExcept.Plugin.Bind
 
 -- | help resolve ambiguous type variables resulting from the
--- very general type of Control.Monad.CheckedExcept.QualifiedDo.(>>=)
+-- very general type of "Control.Monad.CheckedExcept.QualifiedDo".'Control.Monad.CheckedExcept.QualifiedDo.>>='
 plugin :: Plugin
 plugin = defaultPlugin
     { tcPlugin = bindPlugin

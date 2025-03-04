@@ -17,7 +17,7 @@ import Control.Monad.CheckedExcept
 import Prelude hiding (Monad(..), Applicative(..), MonadFail(..))
 import qualified Prelude
 
--- | Bind operator for 'CheckedExceptT' that allows chaining computations
+-- | Bind operator for t'CheckedExceptT' that allows chaining computations
 -- that may expand the exception set.
 (>>=) :: forall exceptions1 exceptions2 exceptions3 m a.
   ( Contains exceptions1 exceptions3
@@ -33,11 +33,11 @@ m >>= f = do
       Left e -> Prelude.pure $ Left (weakenOneOf @exceptions1 @exceptions3 e)
       Right a -> runCheckedExceptT (weakenExceptions (f a))
 
--- | 'pure' function for 'CheckedExceptT'.
+-- | 'pure' function for t'CheckedExceptT'.
 pure :: Prelude.Monad m => a -> CheckedExceptT es m a
 pure = Prelude.pure
 
--- | 'return' function for 'CheckedExceptT'.
+-- | 'return' function for t'CheckedExceptT'.
 return :: Prelude.Monad m => a -> CheckedExceptT es m a
 return = Prelude.return
 
@@ -52,7 +52,7 @@ return = Prelude.return
   -> CheckedExceptT exceptions3 m a
 a >> b = weakenExceptions a Prelude.>> weakenExceptions b
 
--- | 'fail' function for 'CheckedExceptT'.
+-- | 'fail' function for t'CheckedExceptT'.
 fail :: Prelude.MonadFail m => String -> CheckedExceptT es m a
 fail = Prelude.fail
 
