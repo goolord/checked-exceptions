@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP #-}
 
+-- | type checking plugin to assist with unification of weakened exceptions
 module Control.Monad.CheckedExcept.Plugin (plugin) where
 
 import GHC.Plugins

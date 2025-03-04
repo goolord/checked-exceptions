@@ -19,6 +19,7 @@
 #-}
 {-# LANGUAGE PatternSynonyms #-}
 
+-- | basic api of CheckedExceptT
 module Control.Monad.CheckedExcept
   ( -- * types
     CheckedExceptT(..)
@@ -89,7 +90,7 @@ weakenExceptions (CheckedExceptT ma) = CheckedExceptT $ do
 
 -- | Given a proof that 'exceptions1' is a subset of 'exceptions2',
 -- reconstruct the value of the 'OneOf exceptions1' open union to be part of the larger
--- 'OneOf exceptions2' open union. this allows us to compose 'CheckedExceptT' stacks
+-- 'OneOf exceptions2' open union. this allows us to compose 'Control.Monad.CheckedExcept.CheckedExceptT' stacks
 -- with differing exception sets
 weakenOneOf :: forall exceptions1 exceptions2.
      Contains exceptions1 exceptions2
@@ -118,7 +119,7 @@ proveElem :: forall exceptions1 exceptions2 e.
   ) => Dict (Elem e exceptions2)
 proveElem = withDict (unsafeCoerceConstraint :: (Elem e exceptions1, Contains exceptions1 exceptions2) :- (Elem e exceptions2)) Dict
 
--- get the error from 'CheckedExcept'
+-- | get the error from 'CheckedExcept'
 runCheckedExcept :: CheckedExcept es a -> Either (OneOf es) a
 runCheckedExcept ce = runIdentity (runCheckedExceptT ce)
 
@@ -135,14 +136,14 @@ class Typeable e => CheckedException e where
   default fromOneOf :: Typeable e => OneOf es -> Maybe e
   fromOneOf e = withOneOf' e cast
 
--- | DerivingVia newtype wrapper to derive 'CheckedException' from a 'Show' instance declaration.
+-- | DerivingVia newtype wrapper to derive 'Control.Monad.CheckedExcept.CheckedException' from a 'Show' instance declaration.
 -- Useful for prototyping, but I wouldn't recommend this for serious work.
 newtype ShowException a = ShowException a
 
 instance (Show a, Typeable a) => CheckedException (ShowException a) where
   encodeException (ShowException x) = show x
 
--- | DerivingVia newtype wrapper to derive 'CheckedException' from 'Exception'
+-- | DerivingVia newtype wrapper to derive 'Control.Monad.CheckedExcept.CheckedException' from 'Exception'
 newtype ExceptionException a = ExceptionException a
 
 instance (Show a, Typeable a, Exception a) => CheckedException (ExceptionException a) where
@@ -180,7 +181,7 @@ throwCheckedException e = do
       oneOf = OneOf e
   CheckedExceptT $ pure $ Left oneOf
 
--- | apply a function 'f' over a checked exception, using methods from the 'CheckedException' typeclass
+-- | apply a function 'f' over a checked exception, using methods from the 'Control.Monad.CheckedExcept.CheckedException' typeclass
 applyAll :: (forall e. CheckedException e => e -> b) -> OneOf es -> b
 applyAll f (OneOf e) = f e
 
@@ -243,6 +244,9 @@ type family NonEmpty xs :: Constraint where
 -- TODO: exceptions can show up more than once in the list, which we handle with
 -- 'Nub', but the error message we give to the use for trying to catch an exception
 -- twice is really bad
+--
+-- | case on a checked exception with coverage checking. note: while 'es' may not be a set,
+-- the 'CaseException' you supply must be.
 caseException :: NonEmpty es => OneOf es -> CaseException x (Nub es) -> x
 caseException (OneOf e') = go e'
   where

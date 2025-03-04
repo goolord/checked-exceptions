@@ -4,6 +4,7 @@
   , LambdaCase
 #-}
 
+-- | do blocks for CheckedExceptT that compose exceptions
 module Control.Monad.CheckedExcept.QualifiedDo
   ( (>>=)
   , (>>)
