@@ -4,7 +4,7 @@ cabal-version: 2.0
 -- http://haskell.org/cabal/users-guide/
 
 name: checked-exceptions
-version: 0.1.0.0
+version: 0.1.0.1
 synopsis: mtl-style checked exceptions
 description: A monad transformer that allows you to throw and catch a restricted set of exceptions, tracked at the type level.
 -- bug-reports:
