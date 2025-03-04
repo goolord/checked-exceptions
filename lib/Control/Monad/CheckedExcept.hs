@@ -186,7 +186,7 @@ throwCheckedException e = do
 applyAll :: (forall e. CheckedException e => e -> b) -> OneOf es -> b
 applyAll f (OneOf e) = f e
 
--- | Catch an exception or @mempty@ (think 'pure ()' or 'Nothing').
+-- | Catch an exception or @mempty@ (think @pure ()@ or @Nothing@).
 withOneOf :: (Elem e es, Monoid a, CheckedException e) => OneOf es -> (e -> a) -> a
 withOneOf e f = case fromOneOf e of
   Just x -> f x
