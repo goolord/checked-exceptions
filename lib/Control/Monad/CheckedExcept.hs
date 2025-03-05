@@ -54,7 +54,7 @@ module Control.Monad.CheckedExcept
   ) where
 
 import Data.Functor ((<&>))
-import Control.Exception (Exception(..), catch, SomeException)
+import Control.Exception (Exception(..), SomeException)
 import Control.Monad.Except
 import Data.Functor.Identity
 import Data.Kind
@@ -63,9 +63,10 @@ import GHC.TypeLits
 import Data.Constraint
 import Data.Typeable (Typeable, cast, eqT)
 import Data.Type.Equality
-import Control.Monad.IO.Class (MonadIO (liftIO))
+import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Trans (MonadTrans (..))
 import Data.Constraint.Unsafe (unsafeCoerceConstraint)
+import Control.Monad.Catch (MonadCatch (..))
 
 -- | Isomorphic to t'ExceptT' over our open-union exceptions type @t'OneOf' es@.
 -- Because many effects systems have an t'ExceptT' analogue, this would be pretty simple to port to any effects system.
@@ -219,8 +220,8 @@ type family Elem' x xs where
   Elem' x (x ': xs) = 'True
   Elem' x (y ': xs) = Elem' x xs
 
+-- TODO: Sometimes causes weird type errors when it doesn't propagate correctly.
 -- | @ type Elem x xs = Elem' x xs ~ 'True @
--- Sometimes causes weird type errors when it doesn't propagate correctly.
 type family Elem x xs :: Constraint where
   Elem x xs =
     If (Elem' x xs)
@@ -262,9 +263,9 @@ caseException (OneOf e') = go e'
 
 -- | Add 'SomeException' to the exceptions set. Preferably, call this before catching the checked
 -- exceptions so there are no surprising exceptions.
-catchSomeException :: (Monad m, MonadIO m) => Elem SomeException es => CheckedExceptT es m ()
-catchSomeException = do
-  me <- lift $ liftIO $ catch (pure Nothing) (pure . Just)
+catchSomeException :: (Monad m, MonadCatch m, Elem SomeException es) => CheckedExceptT es m a -> CheckedExceptT es m a
+catchSomeException ce = do
+  me <- lift $ catch (Right <$> runCheckedExceptT ce) (pure . Left)
   case me of
-    Nothing -> pure ()
-    Just e -> throwCheckedException (e :: SomeException)
+    Right a -> CheckedExceptT $ pure a
+    Left e -> throwCheckedException (e :: SomeException)
