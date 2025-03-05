@@ -29,15 +29,6 @@ module Control.Monad.CheckedExcept
   , pattern CaseEnd
   , ShowException(..)
   , ExceptionException(..)
-  -- * Type families / constraints
-  , Contains
-  , Elem
-  , Elem'
-  , NonEmpty
-  , NotElemTypeError
-  , Nub
-  , Remove
-  , type (++)
   -- * Typeclass
   , CheckedException(..)
   -- * Utility functions
@@ -51,6 +42,15 @@ module Control.Monad.CheckedExcept
   , caseException
   , (<:)
   , catchSomeException
+  -- * Type families / constraints
+  , Contains
+  , Elem
+  , Elem'
+  , NonEmpty
+  , NotElemTypeError
+  , Nub
+  , Remove
+  , type (++)
   ) where
 
 import Data.Functor ((<&>))
