@@ -9,6 +9,7 @@
   , TypeApplications
   , OverloadedRecordDot
   , ScopedTypeVariables
+  , CPP
 #-}
 
 {-# OPTIONS_GHC -Wno-unused-local-binds #-}
@@ -39,6 +40,7 @@ import Data.Bifunctor (second)
 import GHC.Core.Reduction (Reduction(..))
 import GHC.Tc.Utils.TcType (eqType)
 import Control.Monad (join)
+import GHC.Rename.Names ( renamePkgQual )
 
 {-
     ************************************************************
@@ -50,8 +52,8 @@ import Control.Monad (join)
 
 data Environment = Environment
   { containsTyCon :: TyCon
-  , elem'TyCon :: TyCon
   , elemTyCon :: TyCon
+  , uelemTyCon :: TyCon
   , checkedExceptTTyCon :: TyCon
   , notElemTypeErrorTyCon :: TyCon
   }
@@ -60,11 +62,12 @@ bindPlugin :: TcPlugin
 bindPlugin _ = Just $ TC.TcPlugin
   { TC.tcPluginInit = do
       checkedExceptMod <- lookupCheckedExceptMod
-      containsTyCon <- lookupContains checkedExceptMod
-      elem'TyCon <- lookupElem' checkedExceptMod
-      elemTyCon <- lookupElem checkedExceptMod
+      unionMod <- lookupUnionMod
+      containsTyCon <- lookupContains unionMod
       checkedExceptTTyCon <- lookupCheckedExceptT checkedExceptMod
       notElemTypeErrorTyCon <- lookupNotElemTypeError checkedExceptMod
+      elemTyCon <- lookupElem unionMod
+      uelemTyCon <- lookupUElem unionMod
       pure Environment {..}
   , TC.tcPluginSolve = solveBind
   , TC.tcPluginStop = const $ pure ()
@@ -78,20 +81,31 @@ lookupTyConWithMod name modCE = do
   TC.tcLookupTyCon tyCo
 
 lookupCheckedExceptMod :: TC.TcPluginM Module
-lookupCheckedExceptMod = do
-   findResult <- TC.findImportedModule ( mkModuleName "Control.Monad.CheckedExcept" ) NoPkgQual -- ( Just "checked-exceptions" )
+lookupCheckedExceptMod = lookupMod "Control.Monad.CheckedExcept" Nothing
+
+lookupUnionMod :: TC.TcPluginM Module
+lookupUnionMod = lookupMod "Data.WorldPeace.Union" (Just "world-peace")
+
+lookupMod :: String -> Maybe FastString -> TC.TcPluginM Module
+lookupMod modName pkgName = do
+   let moduleName = ( mkModuleName modName )
+   pkgQual <- resolveImport moduleName pkgName
+   findResult <- TC.findImportedModule moduleName pkgQual
    case findResult of
      TC.Found _ modCE -> pure modCE
-     _ -> error "Couldn't find Control.Monad.CheckedExcept"
+     _ -> error $ "Couldn't find " <> modName <> (case pkgName of
+        Nothing -> ""
+        Just jpkgName -> " from the package " <> unpackFS jpkgName
+      )
 
 lookupContains :: Module -> TC.TcPluginM TyCon
 lookupContains = lookupTyConWithMod "Contains"
 
-lookupElem' :: Module -> TC.TcPluginM TyCon
-lookupElem' = lookupTyConWithMod "Elem'"
-
 lookupElem :: Module -> TC.TcPluginM TyCon
 lookupElem = lookupTyConWithMod "Elem"
+
+lookupUElem :: Module -> TC.TcPluginM TyCon
+lookupUElem = lookupTyConWithMod "UElem"
 
 lookupCheckedExceptT :: Module -> TC.TcPluginM TyCon
 lookupCheckedExceptT modCE = do
@@ -170,20 +184,39 @@ solveBind env@Environment{..} _evBinds _givens wanteds = do
             , tc == containsTyCon
             -> transformConstraint "contains" ir_ev ir_reason ty1Unzonked ty2Unzonked defWork (\ty1 ty2 -> substContains env tk ty1 ty2 ctev_pred)
 
-            -- Check if it's `If (Elem'`
+            -- Check if it's `If (Elem`
             | Just (tcIf, _, [elemTf, _, _]) <- splitTyConAppIgnoringKind ctev_pred
             , getOccName tcIf == mkTcOcc "If"
-            , Just (tcElem', _, [ty1Unzonked, ty2Unzonked]) <- splitTyConAppIgnoringKind elemTf
-            , tcElem' == elem'TyCon
-            -> do transformConstraint "if_1" ir_ev ir_reason ty1Unzonked ty2Unzonked defWork (\ty1 ty2 -> substElem' env ty1 ty2 ctev_pred)
+            , Just (tcElem, _, [ty1Unzonked, ty2Unzonked]) <- splitTyConAppIgnoringKind elemTf
+            , tcElem == elemTyCon
+            -> do
+              transformConstraint "if_1" ir_ev ir_reason ty1Unzonked ty2Unzonked defWork (\ty1 ty2 -> substElem env ty1 ty2 ctev_pred)
 
             -- Check if it's `Elem`
             | Just (tcElem, _, [ty1Unzonked, ty2Unzonked]) <- splitTyConAppIgnoringKind ctev_pred
             , tcElem == elemTyCon
-            -> do transformConstraint "elem_2" ir_ev ir_reason ty1Unzonked ty2Unzonked defWork (\ty1 ty2 -> substElem env ty1 ty2 ctev_pred)
+            -> do
+              transformConstraint "elem_2" ir_ev ir_reason ty1Unzonked ty2Unzonked defWork (\ty1 ty2 -> substElem env ty1 ty2 ctev_pred)
+
+            -- Check if it's `UElem`
+            | Just (tcElem, _, [ty1Unzonked, ty2Unzonked, index]) <- splitTyConAppIgnoringKind ctev_pred
+            , tcElem == uelemTyCon
+            -> do
+              transformConstraint "uelem_2" ir_ev ir_reason ty1Unzonked ty2Unzonked defWork (\ty1 ty2 -> substElem env ty1 index $ substElem env ty1 ty2 ctev_pred)
 
             | otherwise -> do
                 tcTraceLabel "unwanted2" (ctKind wanted, wanted)
+                pure ([], [wanted], [])
+
+        CDictCan (DictCt {di_ev = dict_ev@CtWanted{..}}) -> do
+          if
+            -- Check if it's `UElem`
+            | Just (tcElem, _, [ty1Unzonked, ty2Unzonked, _index]) <- splitTyConAppIgnoringKind ctev_pred
+            , tcElem == uelemTyCon
+            -> do
+              transformConstraint "uelem_2" dict_ev () ty1Unzonked ty2Unzonked defWork (\ty1 ty2 -> substElem env ty1 ty2 ctev_pred)
+            | otherwise -> do
+                tcTraceLabel "unwanted3" (ctKind wanted, wanted)
                 pure ([], [wanted], [])
 
         _ -> do
@@ -195,12 +228,6 @@ substContains _env _tk ty1 _ty2 predTy =
   case getTyVar_maybe ty1 of
     Nothing -> predTy
     Just ty1Var -> substTyWith [ty1Var] [emptyListKindTy] predTy
-
-substElem' :: Environment -> Type -> Type -> PredType -> PredType
-substElem' _env _ty1 ty2 predTy =
-  case getTyVar_maybe ty2 of
-    Nothing -> predTy
-    Just ty2Var -> substTyWith [ty2Var] [emptyListKindTy] predTy
 
 substElem :: Environment -> Type -> Type -> PredType -> PredType
 substElem _env _ty1 ty2 predTy =
@@ -264,33 +291,33 @@ lookupReturnType env = case ctl_bndrs env of
 -}
 
 mkRewriter :: Environment -> UniqFM TyCon TC.TcPluginRewriter
-mkRewriter env@Environment{..} = listToUFM 
-  [ (elem'TyCon, rewriteElem' env)
-  , (elemTyCon, rewriteElem env)
+mkRewriter env@Environment{..} = listToUFM
+  [ (elemTyCon, rewriteElem env)
+  , (uelemTyCon, rewriteUElem env)
   , (containsTyCon, rewriteContains env)
   ]
 
-rewriteElem' :: Environment -> TC.TcPluginRewriter
-rewriteElem' env@Environment{..} = rewriteBothElem trueCase falseCase env
+rewriteElem :: Environment -> TC.TcPluginRewriter
+rewriteElem env@Environment{..} = rewriteBothElem trueCase falseCase env
   where
   trueCase = mkTyConApp promotedTrueDataCon []
   falseCase _ ty1 ty2 = mkTyConApp notElemTypeErrorTyCon [ty1, ty2]
 
-rewriteElem :: Environment -> TC.TcPluginRewriter
-rewriteElem env@Environment{..} = rewriteBothElem trueCase falseCase env
+rewriteUElem :: Environment -> TC.TcPluginRewriter
+rewriteUElem env@Environment{..} = rewriteBothElem trueCase falseCase env
   where
   trueCase = mkConstraintTupleTy []
   falseCase _tk ty1 ty2 = mkTyConApp notElemTypeErrorTyCon [ty1, ty2]
 
 rewriteBothElem :: Applicative f => Type -> (Type -> Type -> Type -> Type) -> Environment -> p1 -> p2 -> [Type] -> f TC.TcPluginRewriteResult
-rewriteBothElem trueCase falseCase Environment{..} _rewriteEnv _givens [tk, ty, tys] =
+rewriteBothElem trueCase falseCase Environment{..} _rewriteEnv _givens (tk : ty : tys : _) =
   case extractMPromotedList tys of
     Nothing -> pure TC.TcPluginNoRewrite
     Just tyList -> do
       let result = if any (eqType ty) tyList
                    then trueCase
                    else falseCase tk ty tys
-      let coercion = mkUnivCo (PluginProv "checked-exceptions") Nominal (mkTyConApp elem'TyCon [ty, tys]) result
+      let coercion = mkUnivCo (PluginProv "checked-exceptions") Nominal (mkTyConApp uelemTyCon [ty, tys]) result
       pure $ TC.TcPluginRewriteTo (Reduction coercion result) []
 rewriteBothElem _ _ _ _ _ _ = pure TC.TcPluginNoRewrite
 
@@ -298,9 +325,9 @@ rewriteContains :: Environment -> TC.TcPluginRewriter
 rewriteContains Environment{..} _rewriteEnv _givens [tk, tys1, tys2] = do
   case extractMPromotedList tys1 of
     Just tyList1 -> do
-      let mkElemConstraint x = mkTyConApp elemTyCon [tk, x, tys2]
+      let mkElemConstraint x = mkTyConApp uelemTyCon [tk, x, tys2]
           result = mkConstraintTupleTy $ fmap mkElemConstraint tyList1
-      let coercion = mkUnivCo (PluginProv "checked-exceptions") Nominal (mkTyConApp elem'TyCon [tys1, tys2]) result
+      let coercion = mkUnivCo (PluginProv "checked-exceptions") Nominal (mkTyConApp uelemTyCon [tys1, tys2]) result
       pure $ TC.TcPluginRewriteTo (Reduction coercion result) []
     _ -> pure TC.TcPluginNoRewrite
 rewriteContains _ _ _ _ = do
@@ -424,3 +451,10 @@ findTyArgs findTyCon ty = do
     case instNewTyCon_maybe tyCon tys of
       Nothing -> join $ listToMaybe $ fmap (findTyArgs findTyCon) tys
       Just (ty', _) -> findTyArgs findTyCon ty'
+
+resolveImport :: ModuleName        -- ^ Module name to import from
+  -> Maybe FastString  -- ^ Optional package qualifier
+  -> TC.TcPluginM PkgQual
+resolveImport mod_name mPkg = do
+  hscEnv <- TC.getTopEnv
+  return $ renamePkgQual (hsc_unit_env hscEnv) mod_name mPkg

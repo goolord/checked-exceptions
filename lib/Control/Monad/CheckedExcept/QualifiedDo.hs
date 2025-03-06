@@ -16,6 +16,7 @@ module Control.Monad.CheckedExcept.QualifiedDo
 import Control.Monad.CheckedExcept
 import Prelude hiding (Monad(..), Applicative(..), MonadFail(..))
 import qualified Prelude
+import Data.WorldPeace
 
 -- | Bind operator for t'CheckedExceptT' that allows chaining computations
 -- that may expand the exception set.
@@ -30,7 +31,7 @@ import qualified Prelude
 m >>= f = do
   CheckedExceptT $ do
     runCheckedExceptT m Prelude.>>= \case
-      Left e -> Prelude.pure $ Left (weakenOneOf @exceptions1 @exceptions3 e)
+      Left e -> Prelude.pure $ Left (relaxUnion @exceptions1 @exceptions3 e)
       Right a -> runCheckedExceptT (weakenExceptions (f a))
 
 -- | 'pure' function for t'CheckedExceptT'.

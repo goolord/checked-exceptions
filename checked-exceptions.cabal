@@ -36,6 +36,7 @@ library
     , mtl >= 2.0.0.0 && < 3.0.0.0
     , constraints >= 0.14 && < 0.15
     , exceptions >= 0.10 && < 0.11
+    , world-peace >= 1.0.2.0 && < 2.0.0.0
     -- typechecker plugin dependencies
     , ghc >=8.6.5 && <10
     , ghc-tcplugins-extra >= 0.4 && < 0.6
@@ -62,6 +63,7 @@ test-suite test
     , text
     , mtl
     , transformers
+    , world-peace
   ghc-options:
     -Wall
   default-language:
