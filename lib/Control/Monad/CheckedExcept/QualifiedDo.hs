@@ -58,6 +58,16 @@ fail = Prelude.fail
 
 {-
 Example usage:
+{-# OPTIONS_GHC -fplugin Control.Monad.CheckedExcept.Plugin -fplugin-opt Control.Monad.CheckedExcept.Plugin:verbose  #-}
+
+{-# LANGUAGE
+    TypeApplications
+  , DataKinds
+  , StandaloneDeriving
+  , DerivingVia
+  , QualifiedDo
+  , FlexibleInstances
+#-}
 
 module CompTest where
 

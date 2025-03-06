@@ -16,8 +16,8 @@
   , MultiParamTypeClasses
   , AllowAmbiguousTypes
   , ConstraintKinds
+  , PatternSynonyms
 #-}
-{-# LANGUAGE PatternSynonyms #-}
 
 -- | Basic API of t'CheckedExceptT'
 module Control.Monad.CheckedExcept

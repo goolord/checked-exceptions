@@ -6,15 +6,12 @@
 {-# OPTIONS_GHC -fplugin Control.Monad.CheckedExcept.Plugin -fplugin-opt Control.Monad.CheckedExcept.Plugin:verbose  #-}
 
 {-# LANGUAGE
-    MagicHash
-  , TemplateHaskell
-  , TypeApplications
+    TypeApplications
   , DataKinds
   , StandaloneDeriving
   , DerivingVia
   , QualifiedDo
   , FlexibleInstances
-  , TypeFamilies
 #-}
 
 module CompTest where

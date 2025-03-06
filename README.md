@@ -5,6 +5,16 @@ A monad transformer that allows you to throw and catch a restricted set of excep
 Consider the following example:
 
 ```haskell
+{-# OPTIONS_GHC -fplugin Control.Monad.CheckedExcept.Plugin -fplugin-opt Control.Monad.CheckedExcept.Plugin:verbose  #-}
+{-# LANGUAGE
+    TypeApplications
+  , DataKinds
+  , StandaloneDeriving
+  , DerivingVia
+  , QualifiedDo
+  , FlexibleInstances
+#-}
+
 type TestExceptions = '[(), Int, Bool, String]
 
 testCE :: CheckedExceptT TestExceptions IO ()
