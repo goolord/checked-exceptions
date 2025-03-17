@@ -38,6 +38,7 @@ library
     , exceptions >= 0.10 && < 0.11
     -- typechecker plugin dependencies
     , ghc >=8.6.5 && <10
+    , ghc-lib == 9.12.1.20250314
     , ghc-tcplugins-extra >= 0.4 && < 0.6
   hs-source-dirs: lib
   default-language: Haskell2010

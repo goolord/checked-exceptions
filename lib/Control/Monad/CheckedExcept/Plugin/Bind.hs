@@ -9,6 +9,7 @@
   , TypeApplications
   , OverloadedRecordDot
   , ScopedTypeVariables
+  , PackageImports
 #-}
 
 {-# OPTIONS_GHC -Wno-unused-local-binds #-}
@@ -24,21 +25,22 @@ module Control.Monad.CheckedExcept.Plugin.Bind
   )
 where
 
-import GHC.Plugins hiding ((<>))
-import GHC.Tc.Types.Constraint
-import qualified GHC.Tc.Plugin as TC
-import qualified GHC.Tc.Types as TC
-import GHC.Tc.Types.Evidence (EvTerm (..), evCast)
-import GHC.Core.TyCo.Rep (UnivCoProvenance(PluginProv))
-import GHC.Tc.Plugin (tcPluginTrace)
-import Data.List (nubBy)
-import GHC.Types.Unique (hasKey)
-import GHC.Builtin.Names (consDataConKey)
-import Data.Maybe (mapMaybe, listToMaybe)
-import Data.Bifunctor (second)
-import GHC.Core.Reduction (Reduction(..))
-import GHC.Tc.Utils.TcType (eqType)
 import Control.Monad (join)
+import Data.Bifunctor (second)
+import Data.List (nubBy)
+import Data.Maybe (mapMaybe, listToMaybe)
+import "ghc-lib" GHC.Builtin.Names (consDataConKey)
+import "ghc-lib" GHC.Core.Reduction (Reduction(..))
+import "ghc-lib" GHC.Core.TyCo.Rep (UnivCoProvenance(PluginProv))
+import "ghc-lib" GHC.Plugins hiding ((<>))
+import "ghc-lib" GHC.Tc.Plugin (tcPluginTrace)
+import "ghc-lib" GHC.Tc.Types.Constraint
+import "ghc-lib" GHC.Tc.Types.CtLoc (ctLocEnv)
+import "ghc-lib" GHC.Tc.Types.Evidence (EvTerm (..), evCast)
+import "ghc-lib" GHC.Tc.Utils.TcType (eqType)
+import "ghc-lib" GHC.Types.Unique (hasKey)
+import qualified "ghc-lib" GHC.Tc.Plugin as TC
+import qualified "ghc-lib" GHC.Tc.Types as TC
 
 {-
     ************************************************************
@@ -290,7 +292,7 @@ rewriteBothElem trueCase falseCase Environment{..} _rewriteEnv _givens [tk, ty, 
       let result = if any (eqType ty) tyList
                    then trueCase
                    else falseCase tk ty tys
-      let coercion = mkUnivCo (PluginProv "checked-exceptions") Nominal (mkTyConApp elem'TyCon [ty, tys]) result
+      let coercion = mkUnivCo (PluginProv "checked-exceptions") [] Nominal (mkTyConApp elem'TyCon [ty, tys]) result
       pure $ TC.TcPluginRewriteTo (Reduction coercion result) []
 rewriteBothElem _ _ _ _ _ _ = pure TC.TcPluginNoRewrite
 
@@ -300,7 +302,7 @@ rewriteContains Environment{..} _rewriteEnv _givens [tk, tys1, tys2] = do
     Just tyList1 -> do
       let mkElemConstraint x = mkTyConApp elemTyCon [tk, x, tys2]
           result = mkConstraintTupleTy $ fmap mkElemConstraint tyList1
-      let coercion = mkUnivCo (PluginProv "checked-exceptions") Nominal (mkTyConApp elem'TyCon [tys1, tys2]) result
+      let coercion = mkUnivCo (PluginProv "checked-exceptions") [] Nominal (mkTyConApp elem'TyCon [tys1, tys2]) result
       pure $ TC.TcPluginRewriteTo (Reduction coercion result) []
     _ -> pure TC.TcPluginNoRewrite
 rewriteContains _ _ _ _ = do
@@ -378,7 +380,7 @@ evByFiat :: String -- ^ Name the coercion should have
          -> Type   -- ^ The LHS of the equivalence relation (~)
          -> Type   -- ^ The RHS of the equivalence relation (~)
          -> EvTerm
-evByFiat name t1 t2 = EvExpr $ Coercion $ mkUnivCo (PluginProv name) Nominal t1 t2
+evByFiat name t1 t2 = EvExpr $ Coercion $ mkUnivCo (PluginProv name) [] Nominal t1 t2
 
 -- a *slightly* more safe version of evByFiat that will succeed even when
 -- the new wanted's core expr is not emitted
@@ -387,7 +389,7 @@ trustMeBro :: String -- ^ Name the coercion should have
          -> Type   -- ^ The LHS of the equivalence relation (~)
          -> Type   -- ^ The RHS of the equivalence relation (~)
          -> EvTerm
-trustMeBro name expr t1 t2 = evCast expr $ mkUnivCo (PluginProv name) Nominal t1 t2
+trustMeBro name expr t1 t2 = evCast expr $ mkUnivCo (PluginProv name) [] Nominal t1 t2
 
 -- accepts a map of types to substitute if they are type variables
 -- and performs those substitutions on the tyUnsubbed argument
