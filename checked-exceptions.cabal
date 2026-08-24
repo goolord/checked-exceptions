@@ -11,33 +11,56 @@ homepage: http://github.com/goolord/checked-exceptions
 bug-reports: http://github.com/goolord/checked-exceptions/issues
 category: Control
 build-type: Simple
-tested-with: GHC == 9.14.1
+tested-with:
+    GHC == 9.10.1
+  , GHC == 9.12.2
+  , GHC == 9.14.1
 extra-doc-files: CHANGELOG.md, README.md
 
 source-repository head
   type: git
   location: https://github.com/goolord/checked-exceptions.git
 
-library
-  exposed-modules:
-      Control.Monad.CheckedExcept
-    , Control.Monad.CheckedExcept.Plugin
-    , Control.Monad.CheckedExcept.QualifiedDo
-  other-modules:
-      Control.Monad.CheckedExcept.Plugin.Defaulting
+common warnings
   ghc-options:
       -Wall
       -Wcompat
       -Widentities
       -Wredundant-constraints
+
+library
+  import: warnings
+  exposed-modules:
+      Control.Monad.CheckedExcept
+    , Control.Monad.CheckedExcept.QualifiedDo
   build-depends:
-      base >= 4.22 && < 4.23
-    , mtl >= 2.0.0.0 && < 3.0.0.0
+      base >= 4.16 && < 5
+    , mtl >= 2.0.0.0 && < 3
     , exceptions >= 0.10 && < 0.11
-    , constraints >= 0.14 && < 0.15
-    , ghc >= 9.14 && < 9.15
+    , constraints >= 0.13 && < 0.15
   hs-source-dirs: lib
-  default-language: GHC2024
+  default-language: GHC2021
+
+library plugin
+  import: warnings
+  visibility: public
+  exposed-modules:
+      Control.Monad.CheckedExcept.Plugin
+  other-modules:
+      Control.Monad.CheckedExcept.Plugin.Defaulting
+  build-depends:
+      checked-exceptions
+    , base >= 4.16 && < 5
+  if impl(ghc >= 9.14)
+    build-depends: ghc >= 9.14 && < 9.15
+  elif impl(ghc >= 9.12)
+    build-depends: ghc >= 9.12 && < 9.13
+  elif impl(ghc >= 9.10)
+    build-depends: ghc >= 9.10 && < 9.11
+  else
+    buildable: False
+  hs-source-dirs: lib
+  default-language: GHC2021
 
 test-suite test
   type: exitcode-stdio-1.0
@@ -53,6 +76,7 @@ test-suite test
     , base
     , tasty-hunit
     , checked-exceptions
+    , checked-exceptions:plugin
     , mtl
     , transformers
     , exceptions
@@ -60,4 +84,4 @@ test-suite test
       -Wall
       -dcore-lint
       -fplugin Control.Monad.CheckedExcept.Plugin
-  default-language: GHC2024
+  default-language: GHC2021

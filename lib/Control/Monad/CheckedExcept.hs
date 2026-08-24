@@ -21,7 +21,6 @@
   , PatternSynonyms
   , FlexibleInstances
   , FlexibleContexts
-  , TypeAbstractions
   , IncoherentInstances
 #-}
 

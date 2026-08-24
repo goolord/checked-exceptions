@@ -2,7 +2,8 @@
 
 ## 0.3.0.0 -- 2026-08-24
 
-* Target GHC 9.14 only (`base >= 4.22`, `ghc >= 9.14`).
+* **Breaking:** `Control.Monad.CheckedExcept.Plugin` moved to the `checked-exceptions:plugin` sublibrary; add `checked-exceptions:plugin` to `build-depends`.
+* Support GHC 9.8+ for the core library (`base >= 4.16`). Plugin sublibrary requires GHC 9.10+ with matching `ghc` (9.10 / 9.12 / 9.14; not `ghc-lib`).
 * `OneOf`: hide data constructor; construct with `oneOf`. Payload carries an `ElemIx` witness.
 * `Elem` and `Contains` are now classes producing `ElemIx` / `Subset` witnesses instead of vacuous type families.
 * `Contains es es` is no longer auto-derived for abstract `es`; use `containsRefl` or `weakenExceptionsWith`.

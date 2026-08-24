@@ -2,6 +2,7 @@
 {-# OPTIONS_GHC -fplugin Control.Monad.CheckedExcept.Plugin #-}
 {-# OPTIONS_GHC -fdefer-type-errors #-}
 {-# OPTIONS_GHC -Wno-deferred-type-errors #-}
+{-# OPTIONS_GHC -Wno-simplifiable-class-constraints #-}
 
 {-# LANGUAGE DataKinds, TypeApplications, QualifiedDo #-}
 

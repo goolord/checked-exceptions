@@ -21,10 +21,9 @@ import GHC.Tc.Utils.TcType (eqType, isMetaTyVarTy)
 import GHC.Core.Predicate (getClassPredTys_maybe)
 import GHC.Core.Class (Class, classKey)
 import GHC.Types.Unique (hasKey)
-import GHC.Builtin.Names (consDataConKey, nilDataConKey)
+import GHC.Builtin.Names (consDataConKey)
 import GHC.Data.Bag (bagToList)
 import Data.List (nubBy)
-import GHC.Types.Var (EvVar, TcTyVar, tyVarKind, varType)
 import qualified GHC.Driver.Plugins as DP
 
 data Environment = Environment
@@ -112,10 +111,8 @@ insertFromPred Environment {containsClass, elemClass} mct classPred acc =
     Just (cls, [es1, es2]) ->
       if classKey cls == classKey containsClass
         then foldr (addContainsBound mct es1 es2) acc (metaListVars es1 ++ metaListVars es2)
-        else acc
-    Just (cls, [ty, es]) ->
-      if classKey cls == classKey elemClass
-        then foldr (addElemBound mct ty es) acc (metaListVars es)
+        else if classKey cls == classKey elemClass
+        then foldr (addElemBound mct es1 es2) acc (metaListVars es2)
         else acc
     _ -> acc
 
@@ -151,10 +148,10 @@ addContainsBound mct es1 es2 alpha acc =
   in upsertBounds alpha new acc
 
 addElemBound :: Maybe Ct -> Type -> Type -> TcTyVar -> BoundsMap -> BoundsMap
-addElemBound mct ty es alpha acc =
+addElemBound mct ty _es alpha acc =
   let old = lookupBounds alpha acc
-      singleton = mkPromotedListTy tYPEKind [ty]
-      new = old {lowerBounds = singleton : lowerBounds old, proposalCts = maybeToList mct <> proposalCts old}
+      singletonLi = mkPromotedListTy tYPEKind [ty]
+      new = old {lowerBounds = singletonLi : lowerBounds old, proposalCts = maybeToList mct <> proposalCts old}
   in upsertBounds alpha new acc
 
 maybeToList :: Maybe a -> [a]

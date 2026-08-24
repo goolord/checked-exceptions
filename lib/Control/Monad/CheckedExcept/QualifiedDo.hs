@@ -1,4 +1,4 @@
-{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE ViewPatterns, LambdaCase #-}
 
 -- | @do@ blocks for 'CheckedExceptT' that compose exceptions.
 --

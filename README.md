@@ -2,9 +2,21 @@
 
 A monad transformer that allows you to throw and catch a restricted set of exceptions, tracked at the type level.
 
-Requires GHC 9.14.
+Requires GHC 9.8+ for the core library. The type-checker plugin (`checked-exceptions:plugin`) requires GHC 9.10+ with a matching `ghc` package.
 
 ## Example
+
+Add to your `.cabal` file:
+
+```cabal
+build-depends:
+    checked-exceptions
+  , checked-exceptions:plugin
+
+ghc-options: -fplugin Control.Monad.CheckedExcept.Plugin
+```
+
+Then in Haskell (the `OPTIONS_GHC` pragma is optional if you set `ghc-options` in Cabal):
 
 ```haskell
 {-# OPTIONS_GHC -fplugin Control.Monad.CheckedExcept.Plugin #-}
@@ -73,7 +85,9 @@ Use duplicate-free exception lists (or `Nub` at the kind level): duplicate types
 
 ## Plugin
 
-**Required** for `QualifiedDo` blocks: `-fplugin Control.Monad.CheckedExcept.Plugin`.
+**Required** for `QualifiedDo` blocks — see the [Example](#example) for Cabal setup (`checked-exceptions:plugin` in `build-depends` plus `-fplugin`).
+
+The plugin lives in a separate public sublibrary so the core library does not depend on `ghc`. It must link against the compiler's `ghc` package (not `ghc-lib`): static `-fplugin` loading requires `plugin :: ghc:GHC.Plugins.Plugin`.
 
 The plugin proposes default values for ambiguous exception-list metavariables created by `>>=` in `QualifiedDo` blocks (and similar). It walks stuck `Elem e alpha` and `Contains es alpha` constraints (including implication givens in nested contexts) where `alpha` is an unfilled `[Type]` metavariable, and proposes:
 
