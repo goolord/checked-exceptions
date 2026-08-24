@@ -1,12 +1,11 @@
-{-# LANGUAGE
-    TypeApplications
-  , ScopedTypeVariables
-  , LambdaCase
-#-}
+{-# LANGUAGE ViewPatterns #-}
 
--- | do blocks for CheckedExceptT that compose exceptions
-module Control.Monad.CheckedExcept.QualifiedDo
-  ( (>>=)
+-- | @do@ blocks for 'CheckedExceptT' that compose exceptions.
+--
+-- Requires @-fplugin Control.Monad.CheckedExcept.Plugin@ so ambiguous
+-- exception-list metavariables (e.g. from 'pure' / 'return' in a block) can
+-- default to @'[]@ or a 'Nub' union of accumulated bounds.
+module Control.Monad.CheckedExcept.QualifiedDo  ( (>>=)
   , (>>)
   , pure
   , return
@@ -17,127 +16,45 @@ import Control.Monad.CheckedExcept
 import Prelude hiding (Monad(..), Applicative(..), MonadFail(..))
 import qualified Prelude
 
--- | Bind operator for t'CheckedExceptT' that allows chaining computations
--- that may expand the exception set.
-(>>=) :: forall exceptions1 exceptions2 exceptions3 m a.
-  ( Contains exceptions1 exceptions3
-  , Contains exceptions2 exceptions3
+type UnionExceptions es1 es2 = Nub (es1 ++ es2)
+
+(>>=) :: forall exceptions1 exceptions2 m a b.
+  ( Contains exceptions1 (UnionExceptions exceptions1 exceptions2)
+  , Contains exceptions2 (UnionExceptions exceptions1 exceptions2)
   , Prelude.Monad m
   )
   => CheckedExceptT exceptions1 m a
-  -> (a -> CheckedExceptT exceptions2 m a)
-  -> CheckedExceptT exceptions3 m a
+  -> (a -> CheckedExceptT exceptions2 m b)
+  -> CheckedExceptT (UnionExceptions exceptions1 exceptions2) m b
 m >>= f = do
   CheckedExceptT $ do
     runCheckedExceptT m Prelude.>>= \case
-      Left e -> Prelude.pure $ Left (weakenOneOf @exceptions1 @exceptions3 e)
-      Right a -> runCheckedExceptT (weakenExceptions (f a))
+      Left e ->
+        Prelude.pure $
+          Left (weakenOneOf @(exceptions1) @(UnionExceptions exceptions1 exceptions2) e)
+      Right a ->
+        runCheckedExceptT (weakenExceptions @(exceptions2) @(UnionExceptions exceptions1 exceptions2) (f a))
 
--- | 'pure' function for t'CheckedExceptT'.
+-- | Leaves @es@ free; empty 'do' blocks need the type-checker plugin to default
+-- @es@ (see module header).
 pure :: Prelude.Monad m => a -> CheckedExceptT es m a
 pure = Prelude.pure
 
--- | 'return' function for t'CheckedExceptT'.
+-- | Same caveat as 'pure'.
 return :: Prelude.Monad m => a -> CheckedExceptT es m a
 return = Prelude.return
 
--- | Sequentially compose two actions, discarding any value produced by the first.
-(>>) :: forall exceptions1 exceptions2 exceptions3 m a x.
-  ( Contains exceptions1 exceptions3
-  , Contains exceptions2 exceptions3
+(>>) :: forall exceptions1 exceptions2 m a x.
+  ( Contains exceptions1 (UnionExceptions exceptions1 exceptions2)
+  , Contains exceptions2 (UnionExceptions exceptions1 exceptions2)
   , Prelude.Monad m
   )
   => CheckedExceptT exceptions1 m x
   -> CheckedExceptT exceptions2 m a
-  -> CheckedExceptT exceptions3 m a
-a >> b = weakenExceptions a Prelude.>> weakenExceptions b
+  -> CheckedExceptT (UnionExceptions exceptions1 exceptions2) m a
+a >> b =
+  weakenExceptions @(exceptions1) @(UnionExceptions exceptions1 exceptions2) a
+    Prelude.>> weakenExceptions @(exceptions2) @(UnionExceptions exceptions1 exceptions2) b
 
--- | 'fail' function for t'CheckedExceptT'.
 fail :: Prelude.MonadFail m => String -> CheckedExceptT es m a
 fail = Prelude.fail
-
-{-
-Example usage:
-{-# OPTIONS_GHC -fplugin Control.Monad.CheckedExcept.Plugin -fplugin-opt Control.Monad.CheckedExcept.Plugin:verbose  #-}
-
-{-# LANGUAGE
-    TypeApplications
-  , DataKinds
-  , StandaloneDeriving
-  , DerivingVia
-  , QualifiedDo
-  , FlexibleInstances
-#-}
-
-module CompTest where
-
-import Control.Monad.CheckedExcept
-import Control.Monad.Trans.Class (lift)
-import qualified Control.Monad.CheckedExcept.QualifiedDo as CheckedExcept
-
-testCE1 :: CheckedExceptT '[()] IO ()
-testCE1 = CheckedExcept.do
-  lift $ putStrLn "1"
-  lift $ pure ()
-  pure ()
-
-testCE2 :: CheckedExceptT '[Int] IO ()
-testCE2 = CheckedExcept.do
-  lift $ putStrLn "2"
-  throwCheckedException (1 :: Int)
-  pure ()
-
-testCE3 :: CheckedExceptT '[Bool] IO ()
-testCE3 = CheckedExcept.do
-  lift $ putStrLn "3"
-  throwCheckedException False
-  pure ()
-
-testCE4 :: CheckedExceptT '[String] IO ()
-testCE4 = CheckedExcept.do
-  lift $ putStrLn "4"
-  throwCheckedException "err"
-  pure ()
-
-testCE5 :: CheckedExceptT '[Char] IO ()
-testCE5 = CheckedExcept.do
-  lift $ putStrLn "5"
-  throwCheckedException 'c'
-  pure ()
-
-testCE :: CheckedExceptT '[(), Int, Bool, String] IO ()
-testCE = CheckedExcept.do
-  () <- testCE1
-  () <- testCE2
-  () <- testCE3
-  () <- testCE4
-  -- () <- testCE5 -- doesn't compile
-  pure ()
-
-test :: CheckedExcept TestExceptions () -> IO ()
-test ce = case runCheckedExcept ce of
-  Left e -> do
-    applyAll (putStrLn . encodeException) e
-    -- or
-    withOneOf @() e $ \() -> putStrLn "()"
-    withOneOf @Int e $ \n -> print $ n + 1
-    withOneOf @Bool e $ \_ -> pure ()
-    -- or
-    caseException e
-      (  (\() -> putStrLn "()")
-      <: (\n -> print $ n + 1)
-      <: CaseAny (\x -> putStrLn $ encodeException x)
-      -- <: (\b -> putStrLn "bool")
-      -- <: (\s -> putStrLn "string")
-      -- <: CaseEnd
-      )
-  Right () -> putStrLn "Right"
-
-type TestExceptions = '[(), Int, Bool, String]
-
-deriving via (ShowException ()) instance CheckedException ()
-deriving via (ShowException Int) instance CheckedException Int
-deriving via (ShowException Bool) instance CheckedException Bool
-deriving via (ShowException String) instance CheckedException [Char]
-deriving via (ShowException Char) instance CheckedException Char
--}

@@ -1,20 +1,17 @@
-cabal-version: 2.0
+cabal-version: 3.4
 name: checked-exceptions
-version: 0.2.0.0
+version: 0.3.0.0
 synopsis: mtl-style checked exceptions
 description: A monad transformer that allows you to throw and catch a restricted set of exceptions, tracked at the type level.
--- bug-reports:
 license: MIT
 license-file: LICENSE
 author: Zachary Churchill
 maintainer: zacharyachurchill@gmail.com
 homepage: http://github.com/goolord/checked-exceptions
 bug-reports: http://github.com/goolord/checked-exceptions/issues
--- copyright:
 category: Control
 build-type: Simple
-tested-with: GHC == 9.10.1
-extra-source-files:
+tested-with: GHC == 9.14.1
 extra-doc-files: CHANGELOG.md, README.md
 
 source-repository head
@@ -27,42 +24,40 @@ library
     , Control.Monad.CheckedExcept.Plugin
     , Control.Monad.CheckedExcept.QualifiedDo
   other-modules:
-      Control.Monad.CheckedExcept.Plugin.Bind
-  ghc-options: -Wall
-  -- other-modules:
-  -- other-extensions:
+      Control.Monad.CheckedExcept.Plugin.Defaulting
+  ghc-options:
+      -Wall
+      -Wcompat
+      -Widentities
+      -Wredundant-constraints
   build-depends:
-      base >=4.12.0.0 && < 5
+      base >= 4.22 && < 4.23
     , mtl >= 2.0.0.0 && < 3.0.0.0
-    , constraints >= 0.14 && < 0.15
     , exceptions >= 0.10 && < 0.11
-    -- typechecker plugin dependencies
-    , ghc >=8.6.5 && <10
-    , ghc-tcplugins-extra >= 0.4 && < 0.6
+    , constraints >= 0.14 && < 0.15
+    , ghc >= 9.14 && < 9.15
   hs-source-dirs: lib
-  default-language: Haskell2010
+  default-language: GHC2024
 
 test-suite test
-  type:
-    exitcode-stdio-1.0
-  hs-source-dirs:
-    test
-  main-is:
-    Main.hs
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is: Main.hs
   other-modules:
-    CompTest
+      CompTest
+    , NegTest
+    , RuntimeTest
   build-depends:
       HUnit
     , tasty
     , base
     , tasty-hunit
-    , tasty-quickcheck
-    , QuickCheck
     , checked-exceptions
-    , text
     , mtl
     , transformers
+    , exceptions
   ghc-options:
-    -Wall
-  default-language:
-    Haskell2010
+      -Wall
+      -dcore-lint
+      -fplugin Control.Monad.CheckedExcept.Plugin
+  default-language: GHC2024
