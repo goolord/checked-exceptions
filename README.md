@@ -63,10 +63,10 @@ When catching an exception, we provide the `CaseException` type to allow coverag
 
 `Elem` and `Contains` are type classes backed by value-level witnesses:
 
-- `ElemIx e es` — index of `e` inside `es` (`Here` / `There`)
-- `Subset es1 es2` — every element of `es1` appears in `es2` (`SubRefl`, `SubNil`, `SubCons`)
-- `lookupSubset` — translate an `ElemIx` along a `Subset` witness
-- `containsRefl` — reflexive `Subset es es` for abstract exception lists
+- `ElemIx e es`: index of `e` inside `es` (`Here` / `There`)
+- `Subset es1 es2`: every element of `es1` appears in `es2` (`SubRefl`, `SubNil`, `SubCons`)
+- `lookupSubset`: translate an `ElemIx` along a `Subset` witness
+- `containsRefl`: reflexive `Subset es es` for abstract exception lists
 
 `OneOf` is constructed with `oneOf`, not a data constructor pattern. The internal constructor carries an `ElemIx` witness so subset widening (`weakenOneOf`, `weakenExceptions`) is structurally total.
 
