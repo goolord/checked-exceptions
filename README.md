@@ -6,8 +6,6 @@ Requires GHC 9.8+ for the core library. The type-checker plugin (`checked-except
 
 ## Example
 
-Add to your `.cabal` file:
-
 ```cabal
 build-depends:
     checked-exceptions
@@ -15,8 +13,6 @@ build-depends:
 
 ghc-options: -fplugin Control.Monad.CheckedExcept.Plugin
 ```
-
-Then in Haskell (the `OPTIONS_GHC` pragma is optional if you set `ghc-options` in Cabal):
 
 ```haskell
 {-# OPTIONS_GHC -fplugin Control.Monad.CheckedExcept.Plugin #-}
@@ -58,7 +54,7 @@ test ce = case runCheckedExcept ce of
   Right () -> putStrLn "Right"
 ```
 
-The facilities this library provides will alert you when you have, intentionally or unintentionally, introduced a new possible exception in your code that is presently unaccounted for.
+Intentionally or unintentionally, introducing a new possible exception in your code that is presently unaccounted for throws a typ eerror.
 Since we enforce at the type level what kinds of exceptions are permissible, you can safely trust the exceptions set in the type signature to do something like generate OpenAPI documentation for an HTTP handler's error responses.
 
 When catching an exception, we provide the `CaseException` type to allow coverage checking with a case-like API (`caseException`), or you can use methods provided by the `CheckedException` typeclass to perform common operations on exceptions without inspecting the type of the exception.
@@ -74,28 +70,15 @@ When catching an exception, we provide the `CaseException` type to allow coverag
 
 `OneOf` is constructed with `oneOf`, not a data constructor pattern. The internal constructor carries an `ElemIx` witness so subset widening (`weakenOneOf`, `weakenExceptions`) is structurally total.
 
-**Breaking change (0.3):** `Contains es es` is not auto-derived for abstract `es`. Pass an explicit witness:
-
-```haskell
-weakenExceptionsWith containsRefl (action :: CheckedExceptT es m a)
-  :: CheckedExceptT es m a
-```
-
-Use duplicate-free exception lists (or `Nub` at the kind level): duplicate types pick the first `ElemIx` index.
-
 ## Plugin
 
-**Required** for `QualifiedDo` blocks — see the [Example](#example) for Cabal setup (`checked-exceptions:plugin` in `build-depends` plus `-fplugin`).
+Required for `QualifiedDo` blocks. See the [Example](#example) for Cabal setup (`checked-exceptions:plugin` in `build-depends` plus `-fplugin`).
 
-The plugin lives in a separate public sublibrary so the core library does not depend on `ghc`. It must link against the compiler's `ghc` package (not `ghc-lib`): static `-fplugin` loading requires `plugin :: ghc:GHC.Plugins.Plugin`.
+The plugin lives in a separate public sublibrary so the core library does not depend on `ghc`.
 
-The plugin proposes default values for ambiguous exception-list metavariables created by `>>=` in `QualifiedDo` blocks (and similar). It walks stuck `Elem e alpha` and `Contains es alpha` constraints (including implication givens in nested contexts) where `alpha` is an unfilled `[Type]` metavariable, and proposes:
+The plugin proposes default values for ambiguous exception-list metavariables created by `>>=` in `QualifiedDo` blocks (and similar).
 
-1. `alpha := '[]` when there are no lower bounds (covers `lift` / `pure` / `return` in a do block)
-2. `alpha := Nub (union of lower bounds)`
-3. `alpha := ub` for each concrete upper bound
-
-GHC verifies each proposal; only a solving assignment is committed. No fiat coercions are emitted. The old plugin rewrite/solve path is removed.
+GHC verifies each proposal; only a solving assignment is committed. No fiat coercions are emitted
 
 Optional tracing: `-fplugin-opt Control.Monad.CheckedExcept.Plugin:verbose`
 
