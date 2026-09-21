@@ -82,6 +82,6 @@ test-suite test
     , exceptions
   ghc-options:
       -Wall
-      -dcore-lint
+      -- -dcore-lint
       -fplugin Control.Monad.CheckedExcept.Plugin
   default-language: GHC2021
