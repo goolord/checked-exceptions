@@ -1,5 +1,13 @@
 # Revision history for checked-exceptions
 
+## Unreleased
+
+* `QualifiedDo` `>>=` / `>>` check each side with `Contains` instead of requiring the result to equal `Nub (es1 ++ es2)`: declared exceptions may be in any order and may include exceptions that are never thrown.
+* `Elem` errors name the full declared list (`Char is not a member of [(), Int, Bool, String]`) instead of `'[]`.
+* `Elem`'s tail instance is no longer `INCOHERENT`; the plugin solves constraints instance resolution can't decide (e.g. `Elem (E a) '[E Int]`, `Elem Int (x ': '[Int])`).
+* Fix the plugin's defaulting never firing (it compared exception-list kinds against a promoted list type), so e.g. a trailing `pure ()` in a `QualifiedDo` block now type checks.
+* `weakenExceptionsWith` forces its `Subset` witness, so a deferred type error in it surfaces when the action runs.
+
 ## 0.3.0.0 -- 2026-08-24
 
 * **Breaking:** `Control.Monad.CheckedExcept.Plugin` moved to the `checked-exceptions:plugin` sublibrary; add `checked-exceptions:plugin` to `build-depends`.

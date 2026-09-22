@@ -16,12 +16,11 @@ import GHC.Plugins hiding ((<>), DefaultingPlugin)
 import GHC.Tc.Types (DefaultingPlugin (..), DefaultingProposal (..))
 import GHC.Tc.Types.Constraint (WantedConstraints (..), Ct, Implication (..), ctPred)
 import qualified GHC.Tc.Plugin as TC
-import GHC.Tc.Plugin (tcPluginTrace)
+import Control.Monad (when)
+import Control.Monad.CheckedExcept.Plugin.Util
 import GHC.Tc.Utils.TcType (eqType, isMetaTyVarTy)
 import GHC.Core.Predicate (getClassPredTys_maybe)
 import GHC.Core.Class (Class, classKey)
-import GHC.Types.Unique (hasKey)
-import GHC.Builtin.Names (consDataConKey)
 import GHC.Data.Bag (bagToList)
 import Data.List (nubBy)
 import qualified GHC.Driver.Plugins as DP
@@ -47,7 +46,7 @@ mkDefaultingPlugin opts = checkedExceptDefaultingPlugin opts
 checkedExceptDefaultingPlugin :: DP.DefaultingPlugin
 checkedExceptDefaultingPlugin opts = Just $ DefaultingPlugin
   { dePluginInit = do
-      checkedExceptMod <- lookupCheckedExceptMod
+      checkedExceptMod <- lookupModule "Control.Monad.CheckedExcept"
       containsClass <- lookupClass checkedExceptMod "Contains"
       elemClass <- lookupClass checkedExceptMod "Elem"
       nubTyFam <- lookupTyFam checkedExceptMod "Nub"
@@ -56,23 +55,6 @@ checkedExceptDefaultingPlugin opts = Just $ DefaultingPlugin
   , dePluginRun = runDefaulting
   , dePluginStop = const $ pure ()
   }
-
-lookupCheckedExceptMod :: TC.TcPluginM Module
-lookupCheckedExceptMod = do
-  findResult <- TC.findImportedModule (mkModuleName "Control.Monad.CheckedExcept") NoPkgQual
-  case findResult of
-    TC.Found _ modCE -> pure modCE
-    _ -> fail "checked-exceptions: could not find Control.Monad.CheckedExcept"
-
-lookupClass :: Module -> String -> TC.TcPluginM Class
-lookupClass modCE name = do
-  name' <- TC.lookupOrig modCE (mkClsOcc name)
-  TC.tcLookupClass name'
-
-lookupTyFam :: Module -> String -> TC.TcPluginM TyCon
-lookupTyFam modCE name = do
-  name' <- TC.lookupOrig modCE (mkTcOcc name)
-  TC.tcLookupTyCon name'
 
 runDefaulting :: Environment -> WantedConstraints -> TC.TcPluginM [DefaultingProposal]
 runDefaulting env@Environment {..} wc = do
@@ -150,7 +132,7 @@ addContainsBound mct es1 es2 alpha acc =
 addElemBound :: Maybe Ct -> Type -> Type -> TcTyVar -> BoundsMap -> BoundsMap
 addElemBound mct ty _es alpha acc =
   let old = lookupBounds alpha acc
-      singletonLi = mkPromotedListTy tYPEKind [ty]
+      singletonLi = mkPromotedListTy liftedTypeKind [ty]
       new = old {lowerBounds = singletonLi : lowerBounds old, proposalCts = maybeToList mct <> proposalCts old}
   in upsertBounds alpha new acc
 
@@ -161,7 +143,7 @@ metaListVars :: Type -> [TcTyVar]
 metaListVars ty =
   case getTyVar_maybe ty of
     Just tv ->
-      if isMetaTyVarTy ty && eqType (tyVarKind tv) (mkPromotedListTy tYPEKind [])
+      if isMetaTyVarTy ty && eqType (tyVarKind tv) (mkListTy liftedTypeKind)
         then [tv]
         else []
     _ -> []
@@ -175,7 +157,7 @@ mkProposal Environment {nubTyFam, verbose} alpha MetaBounds {lowerBounds, upperB
   zonkedLower <- traverse TC.zonkTcType lowerBounds
   zonkedUpper <- traverse TC.zonkTcType upperBounds
   let lowerElems = concatMap lowerBoundElems zonkedLower
-      emptyLower = mkPromotedListTy tYPEKind []
+      emptyLower = mkPromotedListTy liftedTypeKind []
       unionLower = uniquePromotedList lowerElems
       nubLower = mkTyConApp nubTyFam [unionLower]
       -- Only propose Nub union (not raw unionLower): an early non-nub default
@@ -194,50 +176,9 @@ mkProposal Environment {nubTyFam, verbose} alpha MetaBounds {lowerBounds, upperB
       }
 
 uniquePromotedList :: [Type] -> Type
-uniquePromotedList tys = mkPromotedListTy tYPEKind $ nubBy eqType tys
+uniquePromotedList tys = mkPromotedListTy liftedTypeKind $ nubBy eqType tys
 
 -- | Peel list elements from a promoted list, or @[]@ when @ty@ is still an
 -- unresolved metavar (the plugin is re-run as more constraints land).
 lowerBoundElems :: Type -> [Type]
-lowerBoundElems ty =
-  case extractMPromotedList ty of
-    Just ts -> ts
-    Nothing ->
-      if isMetaTyVarTy ty
-        then []
-        else case splitTyConAppIgnoringKind ty of
-          Just (tc, _, [t, ts]) ->
-            if tc `hasKey` consDataConKey
-              then t : lowerBoundElems ts
-              else []
-          Just (tc, _, []) ->
-            if tc `hasKey` nilDataConKey then [] else []
-          _ -> []
-
-extractMPromotedList :: Type -> Maybe [Type]
-extractMPromotedList = go
-  where
-    go listTy =
-      case splitTyConAppIgnoringKind listTy of
-        Just (tc, _, [t, ts]) ->
-          assert (tc `hasKey` consDataConKey) $
-            case go ts of
-              Nothing -> Nothing
-              Just ts' -> Just (t : ts')
-        Just (tc, _, []) ->
-          assert (tc `hasKey` nilDataConKey) $
-            Just []
-        _ -> Nothing
-
-splitTyConAppIgnoringKind :: Type -> Maybe (TyCon, [Type], [Type])
-splitTyConAppIgnoringKind ty = do
-  (tyCon, tys) <- splitTyConApp_maybe ty
-  let (invisTys, visTys) = partitionInvisibleTypes tyCon tys
-  pure (tyCon, invisTys, visTys)
-
-tcTrace :: Outputable a => String -> a -> TC.TcPluginM ()
-tcTrace label x =
-  tcPluginTrace ("[checked-exceptions] " <> label) (ppr x)
-
-when :: Applicative f => Bool -> f () -> f ()
-when p act = if p then act else pure ()
+lowerBoundElems = fst . splitPromotedList

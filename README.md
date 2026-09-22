@@ -54,7 +54,13 @@ test ce = case runCheckedExcept ce of
   Right () -> putStrLn "Right"
 ```
 
-Intentionally or unintentionally, introducing a new possible exception in your code that is presently unaccounted for throws a typ eerror.
+Intentionally or unintentionally, introducing a new possible exception in your code that is presently unaccounted for throws a type error:
+
+```
+• Char is not a member of [(), Int, Bool, String]
+```
+
+The declared exceptions may be listed in any order, and may include exceptions that are never thrown.
 Since we enforce at the type level what kinds of exceptions are permissible, you can safely trust the exceptions set in the type signature to do something like generate OpenAPI documentation for an HTTP handler's error responses.
 
 When catching an exception, we provide the `CaseException` type to allow coverage checking with a case-like API (`caseException`), or you can use methods provided by the `CheckedException` typeclass to perform common operations on exceptions without inspecting the type of the exception.
@@ -76,13 +82,14 @@ Required for `QualifiedDo` blocks. See the [Example](#example) for Cabal setup (
 
 The plugin lives in a separate public sublibrary so the core library does not depend on `ghc`.
 
-The plugin proposes default values for ambiguous exception-list metavariables created by `>>=` in `QualifiedDo` blocks (and similar).
+The plugin:
 
-GHC verifies each proposal; only a solving assignment is committed. No fiat coercions are emitted
+- proposes default values for ambiguous exception-list metavariables created by `>>=` in `QualifiedDo` blocks (and similar), e.g. `'[]` for the exceptions of a trailing `pure ()`. GHC verifies each proposal; only a solving assignment is committed. GHC reports these under `-Wtype-defaults`.
+- solves `Elem` constraints that instance resolution can't decide, such as `Elem (E a) '[E Int]` (unifying `a` with `Int`) or `Elem Int (x ': '[Int])`. Evidence is a real `ElemIx`; no fiat coercions are emitted.
 
 Optional tracing: `-fplugin-opt Control.Monad.CheckedExcept.Plugin:verbose`
 
-`QualifiedDo` `>>=` unions exception sets with `Nub (es1 ++ es2)` in the result type so binds accumulate exceptions without ambiguous metavariables when possible.
+`QualifiedDo` `>>=` requires `Contains es1 es` and `Contains es2 es` of its result `es`. When `es` is still being inferred it becomes `Nub (es1 ++ es2)`, so binds accumulate exceptions without ambiguous metavariables when possible.
 
 ## Deriving `CheckedException`
 

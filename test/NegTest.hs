@@ -3,6 +3,8 @@
 {-# OPTIONS_GHC -fdefer-type-errors #-}
 {-# OPTIONS_GHC -Wno-deferred-type-errors #-}
 {-# OPTIONS_GHC -Wno-simplifiable-class-constraints #-}
+-- The plugin defaults the exceptions of the trailing @pure ()@ in @badBindChar@.
+{-# OPTIONS_GHC -Wno-type-defaults #-}
 
 {-# LANGUAGE DataKinds, TypeApplications, QualifiedDo #-}
 

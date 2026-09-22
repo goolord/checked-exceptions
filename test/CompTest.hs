@@ -13,6 +13,7 @@
 module CompTest where
 
 import Control.Monad.CheckedExcept
+import Data.Typeable (Typeable)
 import Control.Monad.Trans.Class (lift)
 import qualified Control.Monad.CheckedExcept.QualifiedDo as CheckedExcept
 
@@ -87,3 +88,29 @@ deriving via (ShowException String) instance CheckedException [Char]
 deriving via (ShowException Char) instance CheckedException Char
 
 newtype CheckedExceptStack a = CheckedExceptStack { runCheckedExceptStack :: CheckedExceptT TestExceptions IO a }
+
+-- An exception type with a metavariable (@E a@) must still unify with the
+-- declared @E Int@ when the block has a signature.
+newtype E a = E a
+deriving via (ShowException (E a)) instance Typeable a => CheckedException (E a)
+instance Show (E a) where show _ = "E"
+
+polyCE :: CheckedExceptT '[E a] IO ()
+polyCE = pure ()
+
+testPolyCE :: CheckedExceptT '[E Int, Int] IO ()
+testPolyCE = CheckedExcept.do
+  polyCE
+  testCE2
+
+-- Declared exceptions can be in any order ...
+testReordered :: CheckedExceptT '[Int, ()] IO ()
+testReordered = CheckedExcept.do
+  testCE1
+  testCE2
+
+-- ... and may include exceptions that are never thrown.
+testWidened :: CheckedExceptT '[Bool, Int, ()] IO ()
+testWidened = CheckedExcept.do
+  testCE2
+  testCE1

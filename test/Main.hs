@@ -48,6 +48,8 @@ runtimeTests =
         assertEqual "caseException full" "int: 7" caseExceptionFull
     , testCase "caseException CaseAny" $
         assertEqual "caseException any" "'x'" caseExceptionAny
+    , testCase "plugin-solved Elem picks the right index" $
+        assertEqual "pastVar" (Just 5) pastVarTest
     , testCase "catchSomeException wraps IO errors" $ do
         ok <- catchSomeTest
         assertBool "caught SomeException" ok

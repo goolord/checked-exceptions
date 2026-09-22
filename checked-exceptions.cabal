@@ -48,6 +48,8 @@ library plugin
       Control.Monad.CheckedExcept.Plugin
   other-modules:
       Control.Monad.CheckedExcept.Plugin.Defaulting
+    , Control.Monad.CheckedExcept.Plugin.Elem
+    , Control.Monad.CheckedExcept.Plugin.Util
   build-depends:
       checked-exceptions
     , base >= 4.16 && < 5

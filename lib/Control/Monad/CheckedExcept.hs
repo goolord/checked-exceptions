@@ -76,7 +76,8 @@ import Data.Typeable (Typeable, eqT)
 import Data.Type.Equality
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Trans (MonadTrans (..))
-import Data.Constraint (Dict (..), withDict)
+import Data.Constraint (Dict (..))
+import qualified GHC.Exts as Exts
 import Control.Monad.Catch (MonadCatch (..))
 
 -- | Isomorphic to t'ExceptT' over our open-union exceptions type @t'OneOf' es@.
@@ -106,10 +107,13 @@ weakenExceptionsWith ::
   => Subset exceptions1 exceptions2
   -> CheckedExceptT exceptions1 m a
   -> CheckedExceptT exceptions2 m a
-weakenExceptionsWith s (CheckedExceptT ma) = CheckedExceptT $ do
+-- Forcing @s@ (whose fields are strict) up front means a deferred type error in
+-- its evidence surfaces when the action runs, not only once an exception is
+-- inspected.
+weakenExceptionsWith s (CheckedExceptT ma) = s `seq` CheckedExceptT (
   ma <&> \case
     Left e -> Left $ weakenOneOfWith s e
-    Right a -> Right a
+    Right a -> Right a)
 
 -- | See 'weakenOneOfWith'.
 weakenOneOf :: forall exceptions1 exceptions2.
@@ -185,25 +189,39 @@ lookupSubset SubNil ix = case ix of {}
 
 -- | Recover an 'Elem' dictionary from a membership index.
 elemDictFromIx :: forall e es. ElemIx e es -> Dict (Elem e es)
-elemDictFromIx Here = Dict
-elemDictFromIx (There ix) = withDict (elemDictFromIx ix) Dict
+elemDictFromIx ix = Exts.withDict @(Elem e es) ix Dict
 
 -- | Membership in a type-level list, backed by a value-level index.
 --
--- Duplicate types in @es@ are not supported: the incoherent tail instance
--- picks the first index, so prefer @'Nub' es@ (or a duplicate-free list) at
--- the kind level.
+-- The instances only commit once @e@ is known to equal or differ from each
+-- element. When that isn't decidable yet (e.g. @E a@ against @E Int@, or an
+-- element that is a type variable), the type-checker plugin
+-- (@checked-exceptions:plugin@) solves the constraint. For duplicate types in
+-- @es@ the first index is used.
 class Elem (e :: Type) (es :: [Type]) where
   elemIx :: ElemIx e es
 
 instance {-# OVERLAPPING #-} Elem e (e ': es) where
   elemIx = Here
 
-instance {-# INCOHERENT #-} Elem e es => Elem e (x ': es) where
-  elemIx = There (elemIx @e @es)
+instance {-# OVERLAPPABLE #-} ElemIn e es (x ': es) => Elem e (x ': es) where
+  elemIx = There (elemInIx @e @es @(x ': es))
 
 instance Unsatisfiable (NotElemTypeError e '[]) => Elem e '[] where
   elemIx = unsatisfiable
+
+-- | 'Elem' on a suffix of @declared@, kept whole for the error message.
+class ElemIn (e :: Type) (es :: [Type]) (declared :: [Type]) where
+  elemInIx :: ElemIx e es
+
+instance {-# OVERLAPPING #-} ElemIn e (e ': es) declared where
+  elemInIx = Here
+
+instance {-# OVERLAPPABLE #-} ElemIn e es declared => ElemIn e (x ': es) declared where
+  elemInIx = There (elemInIx @e @es @declared)
+
+instance Unsatisfiable (NotElemTypeError e declared) => ElemIn e '[] declared where
+  elemInIx = unsatisfiable
 
 -- | @es1@ is a subset of @es2@.
 --
@@ -259,7 +277,7 @@ withOneOf o f = withOneOf' o $ \(x :: e') -> case eqT @e @e' of
   Nothing -> mempty
 
 withOneOf' :: OneOf es -> (forall e. (Elem e es, CheckedException e, Typeable e) => e -> a) -> a
-withOneOf' (MkOneOf ix e) f = withDict (elemDictFromIx ix) (f e)
+withOneOf' (MkOneOf ix e) f = case elemDictFromIx ix of Dict -> f e
 
 type family Nub xs where
   Nub '[] = '[]
@@ -304,7 +322,7 @@ caseException (MkOneOf _ e') = go e'
   go e (CaseAny f) = f e
   go _ (CaseEndWith x) = x
 
-catchSomeException :: (Monad m, MonadCatch m, Elem SomeException es) => CheckedExceptT es m a -> CheckedExceptT es m a
+catchSomeException :: (MonadCatch m, Elem SomeException es) => CheckedExceptT es m a -> CheckedExceptT es m a
 catchSomeException ce = do
   me <- lift $ catch (Right <$> runCheckedExceptT ce) (pure . Left)
   case me of

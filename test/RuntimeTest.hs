@@ -40,3 +40,13 @@ catchSomeTest = do
     case me of
       Left _ -> True
       _ -> False
+
+-- @Elem Int (x ': '[Int])@ can't be resolved by instances (@x@ might be
+-- @Int@); the plugin solves it with the index of the declared @Int@.
+throwPastVar :: forall x. CheckedExcept (x ': '[Int]) ()
+throwPastVar = throwCheckedException (5 :: Int)
+
+pastVarTest :: Maybe Int
+pastVarTest = case runCheckedExcept (throwPastVar @Bool) of
+  Left e -> fromOneOf @Int e
+  Right () -> Nothing
